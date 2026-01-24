@@ -1,6 +1,9 @@
+#![feature(random)]
+
 use anyhow::{Context, Result, anyhow};
 use bytes::{BufMut, BytesMut};
 use clap::Parser;
+use std::iter::Iterator;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -189,18 +192,11 @@ async fn handle_client(
 
 /* ================= handshake ================= */
 
-// Generate random bytes for handshake (pseudo-random to avoid adding 'rand' dependency)
+// Generate random bytes using std::random (Nightly)
 fn gen_random_buffer(buf: &mut [u8]) {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let mut seed = now as u64;
+    // Requires #![feature(random)]
     for b in buf.iter_mut() {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        *b = (seed >> 33) as u8;
+        *b = std::random::random(..);
     }
 }
 
