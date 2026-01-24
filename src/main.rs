@@ -23,6 +23,9 @@ struct Cli {
     /// Upstream RTMP URL (rtmp://host[:port]/app/stream)
     #[arg(short = 'u', long = "upstream")]
     upstream: String,
+    /// Logging level (eg. info, debug). If omitted, defaults to info. Can be overridden by RUST_LOG env.
+    #[arg(long = "log")]
+    log: Option<String>,
 }
 
 fn parse_rtmp_url(url: &str) -> Result<(String, String, String)> {
@@ -53,18 +56,22 @@ fn parse_rtmp_url(url: &str) -> Result<(String, String, String)> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize tracing subscriber from environment (RUST_LOG), default to info
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
-
     // Parse CLI using clap
     let cli = Cli::parse();
+
+    // Initialize tracing subscriber: prefer CLI `--log` if provided, otherwise use RUST_LOG env, otherwise default to `info`
+    let env_filter = if let Some(ref lvl) = cli.log {
+        tracing_subscriber::EnvFilter::new(lvl.as_str())
+    } else {
+        tracing_subscriber::EnvFilter::try_from_env("RUST_LOG").unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+    };
+    tracing_subscriber::fmt().with_env_filter(env_filter).init();
     let (upstream_addr, app, stream) = parse_rtmp_url(&cli.upstream)?;
 
     // Bind the listening socket and log the configured endpoints
     let listener = TcpListener::bind(&cli.listen).await?;
-    info!(listen = %cli.listen, upstream = %upstream_addr, app = %app, stream = %stream, "listening");
+    info!("listening on: {}", cli.listen);
+    info!("forward to: {}", cli.upstream);
 
     loop {
         let (client, peer) = listener.accept().await?;
@@ -73,7 +80,7 @@ async fn main() -> Result<()> {
         let stream = stream.clone();
 
         tokio::spawn(async move {
-            info!(peer = ?peer, "accepted connection");
+            info!("Received connection from client: {}", peer);
             if let Err(e) = handle_client(client, &upstream, &app, &stream).await {
                 error!(error = %e, "connection error");
             }
@@ -91,8 +98,8 @@ async fn handle_client(
 ) -> Result<()> {
     // Configure TCP options for both client and upstream
     client.set_nodelay(true)?;
-    info!(upstream = %upstream_addr, "connecting to upstream");
     let mut upstream = TcpStream::connect(upstream_addr).await?;
+    info!("Connected to upstream: {}", upstream_addr);
     upstream.set_nodelay(true)?;
 
     // Perform RTMP handshake between client and upstream
@@ -109,12 +116,14 @@ async fn handle_client(
         tokio::select! {
             res = read_rtmp_message(&mut client, &mut c2u_chunk, &mut c2u_headers[..]) => {
                 let msg = res?;
-                info!(direction = "c->u", csid = msg.csid, msg_type = msg.msg_type, len = msg.payload.len(), "received message from client");
+                debug!(direction = "c->u", csid = msg.csid, msg_type = msg.msg_type, len = msg.payload.len(), "received message from client");
+                // For AMF0 commands, we'll log either the plain command or a single-line rewrite summary
+                let cmd_opt = if msg.msg_type == 20 { amf_command_name(&msg.payload).ok() } else { None };
 
                 // Set Chunk Size from client: update local c2u chunk size and forward
                 if msg.msg_type == 1 && msg.payload.len() >= 4 {
                     let new_size = u32::from_be_bytes(msg.payload[..4].try_into().unwrap()) as usize;
-                    info!(old_chunk = c2u_chunk, new_chunk = new_size, "client set chunk size");
+                    debug!(old_chunk = c2u_chunk, new_chunk = new_size, "client set chunk size");
                     c2u_chunk = new_size;
                     write_rtmp_message(&mut upstream, &msg, c2u_chunk).await?;
                     continue;
@@ -122,11 +131,11 @@ async fn handle_client(
 
                 // AMF0 commands from client may be rewritten before forwarding upstream
                 if msg.msg_type == 20 {
-                    if let Some(new_payload) = rewrite_amf(&msg.payload, app, stream_name)? {
-                        debug!("rewrote AMF payload for command");
+                    if let Some((new_payload, summary)) = rewrite_amf(&msg.payload, app, stream_name)? {
                         let mut m = msg.clone();
                         m.payload = new_payload;
                         write_rtmp_message(&mut upstream, &m, c2u_chunk).await?;
+                        info!("Client -> Upstream： {}", summary);
 
                         if is_publish(&msg.payload)? {
                             info!("publish command detected — entering transparent passthrough");
@@ -136,7 +145,9 @@ async fn handle_client(
                         }
                         continue;
                     } else {
-                        debug!("AMF0 command did not require rewrite");
+                        if let Some(cmd) = cmd_opt {
+                            info!("Client -> Upstream: {}", cmd);
+                        }
                     }
                 }
 
@@ -145,12 +156,17 @@ async fn handle_client(
             }
             res = read_rtmp_message(&mut upstream, &mut u2c_chunk, &mut u2c_headers[..]) => {
                 let msg = res?;
-                info!(direction = "u->c", csid = msg.csid, msg_type = msg.msg_type, len = msg.payload.len(), "received message from upstream");
+                debug!(direction = "u->c", csid = msg.csid, msg_type = msg.msg_type, len = msg.payload.len(), "received message from upstream");
+                if msg.msg_type == 20 {
+                    if let Ok(cmd) = amf_command_name(&msg.payload) {
+                        info!("Upstream -> Client: {}", cmd);
+                    }
+                }
 
                 // If upstream sets chunk size, update u2c_chunk and forward
                 if msg.msg_type == 1 && msg.payload.len() >= 4 {
                     let new_size = u32::from_be_bytes(msg.payload[..4].try_into().unwrap()) as usize;
-                    info!(old_chunk = u2c_chunk, new_chunk = new_size, "upstream set chunk size");
+                    debug!(old_chunk = u2c_chunk, new_chunk = new_size, "upstream set chunk size");
                     u2c_chunk = new_size;
                     write_rtmp_message(&mut client, &msg, u2c_chunk).await?;
                     continue;
@@ -167,24 +183,24 @@ async fn handle_client(
 
 async fn handshake(client: &mut TcpStream, upstream: &mut TcpStream) -> Result<()> {
     // RTMP handshake consists of C0+C1, S0+S1+S2, C2 exchanges.
-    info!("starting handshake: relaying C0+C1");
+    debug!("starting handshake: relaying C0+C1");
     let mut c0c1 = vec![0u8; 1 + HANDSHAKE_SIZE];
     client.read_exact(&mut c0c1).await?;
     trace!(bytes = c0c1.len(), "read C0+C1 from client");
     upstream.write_all(&c0c1).await?;
 
-    info!("relaying S0+S1+S2 from upstream to client");
+    debug!("relaying S0+S1+S2 from upstream to client");
     let mut s0s1s2 = vec![0u8; 1 + HANDSHAKE_SIZE * 2];
     upstream.read_exact(&mut s0s1s2).await?;
     trace!(bytes = s0s1s2.len(), "read S0+S1+S2 from upstream");
     client.write_all(&s0s1s2).await?;
 
-    info!("relaying C2 from client to upstream");
+    debug!("relaying C2 from client to upstream");
     let mut c2 = vec![0u8; HANDSHAKE_SIZE];
     client.read_exact(&mut c2).await?;
     trace!(bytes = c2.len(), "read C2 from client");
     upstream.write_all(&c2).await?;
-    info!("handshake complete");
+    debug!("handshake complete");
     Ok(())
 }
 
@@ -315,40 +331,115 @@ fn rewrite_amf(
     payload: &[u8],
     app: &str,
     stream: &str,
-) -> Result<Option<BytesMut>> {
+) -> Result<Option<(BytesMut, String)>> {
     // Attempt to read AMF0 command name and possibly rewrite it.
     let mut p = payload;
     let cmd = amf_read_string(&mut p)?;
-    debug!(command = %cmd, "AMF0 command received");
+    debug!(original_command = %cmd, "AMF0 command received");
 
     match cmd.as_str() {
         "connect" => {
             // connect(tx, object)
             let tx = amf_read_number(&mut p)?;
             let mut obj = amf_read_object(&mut p)?;
-            // Ensure the `app` property points to the configured app
-            obj.push(("app".into(), Amf0::String(app.into())));
+            // find existing app value if present
+            let mut old_app: Option<String> = None;
+            let mut found = false;
+            for (k, v) in obj.iter_mut() {
+                if k == "app" {
+                    if let Amf0::String(s) = v.clone() {
+                        old_app = Some(s);
+                    }
+                    *v = Amf0::String(app.into());
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                obj.push(("app".into(), Amf0::String(app.into())));
+            }
 
             let mut out = BytesMut::new();
             amf_write_string(&mut out, "connect");
             amf_write_number(&mut out, tx);
             amf_write_object(&mut out, &obj);
-            info!(tx = tx, "rewrote connect command with app override");
-            Ok(Some(out))
+            let old = old_app.unwrap_or_else(|| "".into());
+            let summary = format!("rewrote app \"{}\" to \"{}\"", old, app);
+            Ok(Some((out, summary)))
         }
         "publish" => {
             // publish(tx, null, name)
             let tx = amf_read_number(&mut p)?;
             amf_read_null(&mut p)?;
-            amf_read_string(&mut p)?; // original stream name
+            let orig_stream = amf_read_string(&mut p)?; // original stream name
 
             let mut out = BytesMut::new();
             amf_write_string(&mut out, "publish");
             amf_write_number(&mut out, tx);
             amf_write_null(&mut out);
             amf_write_string(&mut out, stream);
-            info!(tx = tx, stream = %stream, "rewrote publish command to target stream");
-            Ok(Some(out))
+            let summary = format!("rewrote stream \"{}\" to \"{}\"", orig_stream, stream);
+            Ok(Some((out, summary)))
+        }
+        "releaseStream" => {
+            // releaseStream may come as (tx, name) or (tx, null, name) or (name)
+            let mut p2 = p;
+            let mut tx_opt: Option<f64> = None;
+            if !p2.is_empty() && p2[0] == 0x00 {
+                tx_opt = Some(amf_read_number(&mut p2)?);
+            }
+            let mut had_null = false;
+            if !p2.is_empty() && p2[0] == 0x05 {
+                amf_read_null(&mut p2)?;
+                had_null = true;
+            }
+            let orig_stream = if !p2.is_empty() && p2[0] == 0x02 {
+                amf_read_string(&mut p2)?
+            } else {
+                String::new()
+            };
+
+            let mut out = BytesMut::new();
+            amf_write_string(&mut out, "releaseStream");
+            if let Some(tx) = tx_opt {
+                amf_write_number(&mut out, tx);
+            }
+            if had_null {
+                amf_write_null(&mut out);
+            }
+            amf_write_string(&mut out, stream);
+            let summary = format!("rewrote stream \"{}\" to \"{}\"", orig_stream, stream);
+            Ok(Some((out, summary)))
+        }
+        "FCPublish" => {
+            // FCPublish may be sent as (tx, name) or (name) or (tx, null, name)
+            let mut p2 = p;
+            let mut tx_opt: Option<f64> = None;
+            if !p2.is_empty() && p2[0] == 0x00 {
+                tx_opt = Some(amf_read_number(&mut p2)?);
+            }
+            let mut had_null = false;
+            if !p2.is_empty() && p2[0] == 0x05 {
+                amf_read_null(&mut p2)?;
+                had_null = true;
+            }
+            let orig_stream = if !p2.is_empty() && p2[0] == 0x02 {
+                amf_read_string(&mut p2)?
+            } else {
+                String::new()
+            };
+
+            let mut out = BytesMut::new();
+            amf_write_string(&mut out, "FCPublish");
+            if let Some(tx) = tx_opt {
+                amf_write_number(&mut out, tx);
+            }
+            if had_null {
+                amf_write_null(&mut out);
+            }
+            amf_write_string(&mut out, stream);
+            let summary = format!("rewrote stream \"{}\" to \"{}\"", orig_stream, stream);
+            Ok(Some((out, summary)))
         }
         _ => {
             debug!(command = %cmd, "no rewrite performed for AMF0 command");
@@ -360,8 +451,15 @@ fn rewrite_amf(
 fn is_publish(payload: &[u8]) -> Result<bool> {
     let mut p = payload;
     let cmd = amf_read_string(&mut p)?;
-    debug!(command = %cmd, "is_publish check");
+    trace!(command = %cmd, "is_publish check");
     Ok(cmd == "publish")
+}
+
+// Peek AMF0 command name without mutating the original slice
+fn amf_command_name(payload: &[u8]) -> Result<String> {
+    let mut tmp = payload;
+    let cmd = amf_read_string(&mut tmp)?;
+    Ok(cmd)
 }
 
 /* ================= AMF0 helpers ================= */
