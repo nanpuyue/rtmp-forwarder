@@ -127,14 +127,14 @@ async fn handle_client(
         tokio::select! {
             res = read_rtmp_message(&mut client, &mut c2u_chunk, &mut c2u_headers[..]) => {
                 let msg = res.context("client read error")?;
-                debug!(direction = "c->u", csid = msg.csid, msg_type = msg.msg_type, len = msg.payload.len(), "received message from client");
+                trace!(direction = "c->u", csid = msg.csid, msg_type = msg.msg_type, len = msg.payload.len(), "received message from client");
                 // For AMF0 commands, we'll log either the plain command or a single-line rewrite summary
                 let cmd_opt = if msg.msg_type == 20 { amf_command_name(&msg.payload).ok() } else { None };
 
                 // Set Chunk Size from client: update local c2u chunk size and forward
                 if msg.msg_type == 1 && msg.payload.len() >= 4 {
                     let new_size = u32::from_be_bytes(msg.payload[..4].try_into().unwrap()) as usize;
-                    debug!(old_chunk = c2u_chunk, new_chunk = new_size, "client set chunk size");
+                    trace!(old_chunk = c2u_chunk, new_chunk = new_size, "client set chunk size");
                     c2u_chunk = new_size;
                     write_rtmp_message(&mut upstream, &msg, c2u_chunk).await.context("failed to forward chunk size to upstream")?;
                     continue;
@@ -146,7 +146,7 @@ async fn handle_client(
                         let mut m = msg.clone();
                         m.payload = new_payload;
                         write_rtmp_message(&mut upstream, &m, c2u_chunk).await.context("failed to write rewritten AMF to upstream")?;
-                        info!("Client -> Upstream： {}", summary);
+                        info!("Client -> Upstream: {}", summary);
 
                         if is_publish(&msg.payload)? {
                             info!("publish command detected — entering transparent passthrough");
@@ -157,7 +157,7 @@ async fn handle_client(
                         continue;
                     } else {
                         if let Some(cmd) = cmd_opt {
-                            info!("Client -> Upstream: {}", cmd);
+                            debug!("Client -> Upstream: {}", cmd);
                         }
                     }
                 }
@@ -167,17 +167,17 @@ async fn handle_client(
             }
             res = read_rtmp_message(&mut upstream, &mut u2c_chunk, &mut u2c_headers[..]) => {
                 let msg = res.context("upstream read error")?;
-                debug!(direction = "u->c", csid = msg.csid, msg_type = msg.msg_type, len = msg.payload.len(), "received message from upstream");
+                trace!(direction = "u->c", csid = msg.csid, msg_type = msg.msg_type, len = msg.payload.len(), "received message from upstream");
                 if msg.msg_type == 20 {
                     if let Ok(cmd) = amf_command_name(&msg.payload) {
-                        info!("Upstream -> Client: {}", cmd);
+                        debug!("Upstream -> Client: {}", cmd);
                     }
                 }
 
                 // If upstream sets chunk size, update u2c_chunk and forward
                 if msg.msg_type == 1 && msg.payload.len() >= 4 {
                     let new_size = u32::from_be_bytes(msg.payload[..4].try_into().unwrap()) as usize;
-                    debug!(old_chunk = u2c_chunk, new_chunk = new_size, "upstream set chunk size");
+                    trace!(old_chunk = u2c_chunk, new_chunk = new_size, "upstream set chunk size");
                     u2c_chunk = new_size;
                     write_rtmp_message(&mut client, &msg, u2c_chunk).await.context("failed to forward chunk size to client")?;
                     continue;
@@ -206,12 +206,12 @@ async fn handshake_with_client(client: &mut TcpStream) -> Result<()> {
     let mut c0 = [0u8; 1];
     client.read_exact(&mut c0).await.context("read C0")?;
     let version = c0[0];
-    trace!(version = version, "read C0 from client");
+    debug!(version = version, "read C0 from client");
 
     // 2. Read C1
     let mut c1 = vec![0u8; HANDSHAKE_SIZE];
     client.read_exact(&mut c1).await.context("read C1")?;
-    trace!("read C1 from client");
+    debug!("read C1 from client");
 
     // 3. Write S0 + S1 + S2
     // S0 = version (usually 3)
@@ -240,7 +240,7 @@ async fn handshake_with_client(client: &mut TcpStream) -> Result<()> {
     // 4. Read C2
     let mut c2 = vec![0u8; HANDSHAKE_SIZE];
     client.read_exact(&mut c2).await.context("read C2")?;
-    trace!("read C2 from client");
+    debug!("read C2 from client");
 
     // In a strict server, we'd verify C2 matches S1, but for a proxy we generally accept.
     debug!("handshake with client complete");
@@ -278,7 +278,7 @@ async fn handshake_with_upstream(upstream: &mut TcpStream) -> Result<()> {
 
     let mut s2 = vec![0u8; HANDSHAKE_SIZE];
     upstream.read_exact(&mut s2).await.context("read S2")?;
-    trace!("read S0+S1+S2 from upstream");
+    debug!("read S0+S1+S2 from upstream");
 
     // 3. Write C2 (Echo of S1)
     upstream
@@ -411,7 +411,7 @@ async fn write_rtmp_message(s: &mut TcpStream, msg: &RtmpMessage, chunk_size: us
     h.put_u8(msg.msg_type);
     h.put_u32_le(msg.stream_id);
     s.write_all(&h).await?;
-    debug!(
+    trace!(
         csid = msg.csid,
         msg_type = msg.msg_type,
         len = msg.payload.len(),
@@ -428,7 +428,7 @@ async fn write_rtmp_message(s: &mut TcpStream, msg: &RtmpMessage, chunk_size: us
             s.write_all(&[msg.csid | 0b1100_0000]).await?;
         }
     }
-    debug!(
+    trace!(
         csid = msg.csid,
         msg_type = msg.msg_type,
         len = msg.payload.len(),
