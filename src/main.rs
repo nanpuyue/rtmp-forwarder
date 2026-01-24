@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use bytes::{BufMut, BytesMut};
-use std::env;
+use clap::Parser;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -12,35 +12,17 @@ const HANDSHAKE_SIZE: usize = 1536;
 
 /* ================= args ================= */
 
-struct Args {
+/// CLI: support `-l`/`--listen` and `-u`/`--upstream`.
+#[derive(Parser, Debug)]
+#[command(about = "RTMP forwarder proxy")]
+struct Cli {
+    /// Local listen address (default 127.0.0.1:1935)
+    #[arg(short = 'l', long = "listen", default_value = "127.0.0.1:1935")]
     listen: String,
-    upstream_addr: String, // host:port
-    app: String,
-    stream: String,
-}
 
-fn parse_args() -> Result<Args> {
-    let mut listen = None;
-    let mut upstream = None;
-
-    let mut it = env::args().skip(1);
-    while let Some(k) = it.next() {
-        match k.as_str() {
-            "--listen" => listen = it.next(),
-            "--upstream" => upstream = it.next(),
-            _ => return Err(anyhow!("unknown arg {}", k)),
-        }
-    }
-
-    let (addr, app, stream) =
-        parse_rtmp_url(&upstream.ok_or_else(|| anyhow!("--upstream required"))?)?;
-
-    Ok(Args {
-        listen: listen.ok_or_else(|| anyhow!("--listen required"))?,
-        upstream_addr: addr,
-        app,
-        stream,
-    })
+    /// Upstream RTMP URL (rtmp://host[:port]/app/stream)
+    #[arg(short = 'u', long = "upstream")]
+    upstream: String,
 }
 
 fn parse_rtmp_url(url: &str) -> Result<(String, String, String)> {
@@ -76,17 +58,19 @@ async fn main() -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let args = parse_args()?;
+    // Parse CLI using clap
+    let cli = Cli::parse();
+    let (upstream_addr, app, stream) = parse_rtmp_url(&cli.upstream)?;
 
     // Bind the listening socket and log the configured endpoints
-    let listener = TcpListener::bind(&args.listen).await?;
-    info!(listen = %args.listen, upstream = %args.upstream_addr, app = %args.app, stream = %args.stream, "listening");
+    let listener = TcpListener::bind(&cli.listen).await?;
+    info!(listen = %cli.listen, upstream = %upstream_addr, app = %app, stream = %stream, "listening");
 
     loop {
         let (client, peer) = listener.accept().await?;
-        let upstream = args.upstream_addr.clone();
-        let app = args.app.clone();
-        let stream = args.stream.clone();
+        let upstream = upstream_addr.clone();
+        let app = app.clone();
+        let stream = stream.clone();
 
         tokio::spawn(async move {
             info!(peer = ?peer, "accepted connection");
