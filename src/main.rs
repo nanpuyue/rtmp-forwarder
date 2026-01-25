@@ -20,9 +20,14 @@ struct Cli {
     #[arg(short = 'l', long = "listen", default_value = "127.0.0.1:1935")]
     listen: String,
 
-    /// Upstream RTMP URL (rtmp://host[:port]/app/stream)
+    /// Upstream RTMP URL(s) (rtmp://host[:port]/app/stream)
     #[arg(short = 'u', long = "upstream")]
-    upstream: String,
+    upstream: Vec<String>,
+
+    /// Relay host:port for original push (no rewrite)
+    #[arg(short = 'r', long = "relay")]
+    relay: Option<String>,
+
     /// Logging level (eg. info, debug). If omitted, defaults to info. Can be overridden by RUST_LOG env.
     #[arg(long = "log")]
     log: Option<String>,
@@ -67,22 +72,48 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
     };
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
-    let (upstream_addr, app, stream) = parse_rtmp_url(&cli.upstream)?;
+
+    let mut targets = Vec::new();
+    for u in &cli.upstream {
+        let (addr, app, stream) = parse_rtmp_url(u)?;
+        targets.push(server::UpstreamConfig {
+            addr,
+            app: Some(app),
+            stream: Some(stream),
+        });
+    }
+
+    if let Some(relay_addr) = cli.relay {
+        let addr = if relay_addr.contains(':') {
+            relay_addr
+        } else {
+            format!("{}:1935", relay_addr)
+        };
+        targets.push(server::UpstreamConfig {
+            addr,
+            app: None,
+            stream: None,
+        });
+    }
 
     // Bind the listening socket and log the configured endpoints
     let listener = TcpListener::bind(&cli.listen).await?;
     info!("listening on: {}", cli.listen);
-    info!("forward to: {}", cli.upstream);
+    for t in &targets {
+        if let Some(ref app) = t.app {
+            info!("forward to: {}/{}/{}", t.addr, app, t.stream.as_ref().unwrap());
+        } else {
+            info!("relay to: {} (original app/stream)", t.addr);
+        }
+    }
 
     loop {
         let (client, peer) = listener.accept().await?;
-        let upstream = upstream_addr.clone();
-        let app = app.clone();
-        let stream = stream.clone();
+        let targets = targets.clone();
 
         tokio::spawn(async move {
             info!("Received connection from client: {}", peer);
-            if let Err(e) = server::handle_client(client, &upstream, &app, &stream).await {
+            if let Err(e) = server::handle_client(client, targets).await {
                 error!(error = %e, "connection error");
             }
         });

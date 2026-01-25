@@ -121,13 +121,6 @@ pub fn rewrite_amf(payload: &[u8], app: &str, stream: &str) -> Result<Option<(By
     }
 }
 
-pub fn is_publish(payload: &[u8]) -> Result<bool> {
-    let mut p = payload;
-    let cmd = amf_read_string(&mut p)?;
-    trace!(command = %cmd, "is_publish check");
-    Ok(cmd == "publish")
-}
-
 // Peek AMF0 command name without mutating the original slice
 pub fn amf_command_name(payload: &[u8]) -> Result<String> {
     let mut tmp = payload;
@@ -138,13 +131,13 @@ pub fn amf_command_name(payload: &[u8]) -> Result<String> {
 /* ================= AMF0 helpers ================= */
 
 #[derive(Clone)]
-enum Amf0 {
+pub enum Amf0 {
     String(String),
     Number(f64),
     Boolean(bool),
 }
 
-fn amf_read_string(p: &mut &[u8]) -> Result<String> {
+pub fn amf_read_string(p: &mut &[u8]) -> Result<String> {
     // AMF0 string: type 0x02, 2-byte big-endian length, then utf8 bytes
     if p.is_empty() || p[0] != 0x02 {
         return Err(anyhow!("not string"));
@@ -156,7 +149,7 @@ fn amf_read_string(p: &mut &[u8]) -> Result<String> {
     Ok(s)
 }
 
-fn amf_read_number(p: &mut &[u8]) -> Result<f64> {
+pub fn amf_read_number(p: &mut &[u8]) -> Result<f64> {
     // AMF0 number: type 0x00 followed by 8-byte big-endian IEEE-754
     if p.is_empty() || p[0] != 0x00 {
         return Err(anyhow!("not number"));
@@ -167,7 +160,7 @@ fn amf_read_number(p: &mut &[u8]) -> Result<f64> {
     Ok(v)
 }
 
-fn amf_read_boolean(p: &mut &[u8]) -> Result<bool> {
+pub fn amf_read_boolean(p: &mut &[u8]) -> Result<bool> {
     // AMF0 boolean: type 0x01 followed by 1 byte (0=false, !=0=true)
     if p.is_empty() || p[0] != 0x01 {
         return Err(anyhow!("not boolean"));
@@ -178,7 +171,7 @@ fn amf_read_boolean(p: &mut &[u8]) -> Result<bool> {
     Ok(v)
 }
 
-fn amf_read_null(p: &mut &[u8]) -> Result<()> {
+pub fn amf_read_null(p: &mut &[u8]) -> Result<()> {
     if p.is_empty() || p[0] != 0x05 {
         return Err(anyhow!("not null"));
     }
@@ -187,9 +180,9 @@ fn amf_read_null(p: &mut &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn amf_read_object(p: &mut &[u8]) -> Result<Vec<(String, Amf0)>> {
+pub fn amf_read_object(p: &mut &[u8]) -> Result<Vec<(String, Amf0)>> {
     // AMF0 object: 0x03 marker, then repeated key-value pairs, terminated by 0x00 0x00 0x09
-    if p.is_empty() || p[0] != 0x03 {
+    if p.is_empty() || p[0] != 0x3 {
         return Err(anyhow!("not object"));
     }
     *p = &p[1..];
@@ -213,23 +206,23 @@ fn amf_read_object(p: &mut &[u8]) -> Result<Vec<(String, Amf0)>> {
     Ok(v)
 }
 
-fn amf_write_string(b: &mut BytesMut, s: &str) {
+pub fn amf_write_string(b: &mut BytesMut, s: &str) {
     b.put_u8(0x02);
     b.put_u16(s.len() as u16);
     b.extend_from_slice(s.as_bytes());
 }
-fn amf_write_number(b: &mut BytesMut, n: f64) {
+pub fn amf_write_number(b: &mut BytesMut, n: f64) {
     b.put_u8(0x00);
     b.extend_from_slice(&n.to_be_bytes());
 }
-fn amf_write_boolean(b: &mut BytesMut, v: bool) {
+pub fn amf_write_boolean(b: &mut BytesMut, v: bool) {
     b.put_u8(0x01);
     b.put_u8(if v { 1 } else { 0 });
 }
-fn amf_write_null(b: &mut BytesMut) {
+pub fn amf_write_null(b: &mut BytesMut) {
     b.put_u8(0x05);
 }
-fn amf_write_object(b: &mut BytesMut, o: &[(String, Amf0)]) {
+pub fn amf_write_object(b: &mut BytesMut, o: &[(String, Amf0)]) {
     b.put_u8(0x03);
     for (k, v) in o {
         b.put_u16(k.len() as u16);

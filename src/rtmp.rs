@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use bytes::{BufMut, BytesMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+
 use tracing::trace;
 
 #[derive(Clone)]
@@ -19,11 +19,13 @@ pub struct RtmpHeader {
     pub stream_id: u32,
 }
 
-pub async fn read_rtmp_message(
-    s: &mut TcpStream,
+pub async fn read_rtmp_message<S>(
+    s: &mut S,
     chunk_size: &mut usize,
     last_headers: &mut [Option<RtmpHeader>],
-) -> Result<RtmpMessage> {
+) -> Result<RtmpMessage>
+where S: tokio::io::AsyncRead + Unpin
+{
     let mut bh = [0u8; 1];
     s.read_exact(&mut bh).await?;
     // Basic header: fmt (2 bits) and csid (6 bits)
@@ -95,7 +97,7 @@ pub async fn read_rtmp_message(
 
         // If message spans multiple chunks, read the subsequent basic header byte (fmt3)
         if payload.len() < msg_len {
-            s.read_exact(&mut bh).await?; // fmt3
+            s.read_exact(&mut bh).await?;
         }
     }
 
@@ -114,7 +116,9 @@ pub async fn read_rtmp_message(
     })
 }
 
-pub async fn write_rtmp_message(s: &mut TcpStream, msg: &RtmpMessage, chunk_size: usize) -> Result<()> {
+pub async fn write_rtmp_message<S>(s: &mut S, msg: &RtmpMessage, chunk_size: usize) -> Result<()> 
+where S: tokio::io::AsyncWrite + Unpin
+{
     let mut h = BytesMut::new();
     h.put_u8(msg.csid);
     h.put_u24(0);

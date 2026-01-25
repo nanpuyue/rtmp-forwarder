@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::debug;
 
 pub const HANDSHAKE_SIZE: usize = 1536;
@@ -12,7 +12,9 @@ fn gen_random_buffer(buf: &mut [u8]) {
     }
 }
 
-pub async fn handshake_with_client(client: &mut TcpStream) -> Result<()> {
+pub async fn handshake_with_client<S>(client: &mut S) -> Result<()> 
+where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
+{
     // RTMP Server Handshake
     // 1. Read C0
     let mut c0 = [0u8; 1];
@@ -59,7 +61,9 @@ pub async fn handshake_with_client(client: &mut TcpStream) -> Result<()> {
     Ok(())
 }
 
-pub async fn handshake_with_upstream(upstream: &mut TcpStream) -> Result<()> {
+pub async fn handshake_with_upstream<S>(upstream: &mut S) -> Result<()> 
+where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
+{
     // RTMP Client Handshake
     // 1. Write C0 + C1
     let mut c0c1 = Vec::with_capacity(1 + HANDSHAKE_SIZE);
