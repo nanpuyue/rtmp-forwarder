@@ -152,6 +152,32 @@ where S: tokio::io::AsyncWrite + Unpin
     Ok(())
 }
 
+pub async fn send_rtmp_command<S>(
+    s: &mut S,
+    csid: u8,
+    stream_id: u32,
+    chunk_size: usize,
+    name: &str,
+    tx_id: f64,
+    items: &[(&str, crate::amf::Amf0)],
+    args: &[crate::amf::Amf0],
+) -> Result<()>
+where S: tokio::io::AsyncWrite + Unpin {
+    let mut payload = BytesMut::new();
+    crate::amf::amf_write_string(&mut payload, name);
+    crate::amf::amf_write_number(&mut payload, tx_id);
+    if items.is_empty() {
+        crate::amf::amf_read_null(&mut &[][..]).ok(); // This is just for dummy null if needed, but better use amf_write_null
+        crate::amf::amf_write_null(&mut payload);
+    } else {
+        crate::amf::amf_write_object(&mut payload, items);
+    }
+    for arg in args {
+        crate::amf::amf_write_value(&mut payload, arg);
+    }
+    write_rtmp_message(s, &RtmpMessage { csid, msg_type: 20, stream_id, payload }, chunk_size).await
+}
+
 /* ================= misc ================= */
 
 trait PutU24 {

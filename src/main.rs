@@ -1,12 +1,16 @@
 #![feature(random)]
 
 mod amf;
+mod config;
 mod handshake;
 mod rtmp;
 mod server;
+mod web;
+mod forwarder;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use clap::Parser;
+use std::sync::{Arc, RwLock};
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
@@ -17,8 +21,8 @@ use tracing::{error, info};
 #[command(about = "RTMP forwarder proxy")]
 struct Cli {
     /// Local listen address (default 127.0.0.1:1935)
-    #[arg(short = 'l', long = "listen", default_value = "127.0.0.1:1935")]
-    listen: String,
+    #[arg(short = 'l', long = "listen")]
+    listen: Option<String>,
 
     /// Upstream RTMP URL(s) (rtmp://host[:port]/app/stream)
     #[arg(short = 'u', long = "upstream")]
@@ -31,24 +35,28 @@ struct Cli {
     /// Logging level (eg. info, debug). If omitted, defaults to info. Can be overridden by RUST_LOG env.
     #[arg(long = "log")]
     log: Option<String>,
+
+    /// Web dashboard address (default 0.0.0.0:8080)
+    #[arg(short = 'w', long = "web")]
+    web: Option<String>,
 }
 
 fn parse_rtmp_url(url: &str) -> Result<(String, String, String)> {
     if !url.starts_with("rtmp://") {
-        return Err(anyhow!("invalid rtmp url"));
+        return Err(anyhow::anyhow!("invalid rtmp url"));
     }
 
     let s = &url[7..];
     let mut parts = s.splitn(2, '/');
 
-    let host = parts.next().ok_or_else(|| anyhow!("missing host"))?;
+    let host = parts.next().ok_or_else(|| anyhow::anyhow!("missing host"))?;
     let host = if host.contains(':') {
         host.to_string()
     } else {
         format!("{}:1935", host)
     };
 
-    let path = parts.next().ok_or_else(|| anyhow!("missing app"))?;
+    let path = parts.next().ok_or_else(|| anyhow::anyhow!("missing app"))?;
     let mut p = path.split('/');
 
     let app = p.next().unwrap().to_string();
@@ -64,56 +72,50 @@ async fn main() -> Result<()> {
     // Parse CLI using clap
     let cli = Cli::parse();
 
-    // Initialize tracing subscriber: prefer CLI `--log` if provided, otherwise use RUST_LOG env, otherwise default to `info`
-    let env_filter = if let Some(ref lvl) = cli.log {
-        tracing_subscriber::EnvFilter::new(lvl.as_str())
-    } else {
-        tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
-            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
-    };
+    // 1. Load persistent config
+    let mut app_config = config::load_config();
+
+    // 2. Overlays CLI arguments if provided
+    if let Some(l) = cli.listen { app_config.listen_addr = l; }
+    if let Some(log) = cli.log { app_config.log_level = log; }
+    if let Some(w) = cli.web { app_config.web_addr = w; }
+    if !cli.upstream.is_empty() {
+        app_config.upstreams = cli.upstream.iter().filter_map(|u| {
+            let (addr, app, stream) = parse_rtmp_url(u).ok()?;
+            Some(server::UpstreamConfig { addr, app: Some(app), stream: Some(stream), enabled: true })
+        }).collect();
+    }
+    if let Some(r) = cli.relay {
+        let addr = if r.contains(':') { r } else { format!("{}:1935", r) };
+        app_config.relay_addr = Some(addr);
+        app_config.relay_enabled = true;
+    }
+
+    // Initialize tracing subscriber
+    let env_filter = tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(&app_config.log_level));
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
-    let mut targets = Vec::new();
-    for u in &cli.upstream {
-        let (addr, app, stream) = parse_rtmp_url(u)?;
-        targets.push(server::UpstreamConfig {
-            addr,
-            app: Some(app),
-            stream: Some(stream),
-        });
-    }
+    let shared_config = Arc::new(RwLock::new(app_config));
 
-    if let Some(relay_addr) = cli.relay {
-        let addr = if relay_addr.contains(':') {
-            relay_addr
-        } else {
-            format!("{}:1935", relay_addr)
-        };
-        targets.push(server::UpstreamConfig {
-            addr,
-            app: None,
-            stream: None,
-        });
-    }
+    // 3. Start Web Server
+    let web_conf = shared_config.clone();
+    tokio::spawn(async move {
+        web::start_web_server(web_conf).await;
+    });
 
-    // Bind the listening socket and log the configured endpoints
-    let listener = TcpListener::bind(&cli.listen).await?;
-    info!("listening on: {}", cli.listen);
-    for t in &targets {
-        if let Some(ref app) = t.app {
-            info!("forward to: {}/{}/{}", t.addr, app, t.stream.as_ref().unwrap());
-        } else {
-            info!("relay to: {} (original app/stream)", t.addr);
-        }
-    }
+    // Bind the listening socket based on current config
+    let listen_addr = shared_config.read().unwrap().listen_addr.clone();
+    let listener = TcpListener::bind(&listen_addr).await?;
+    info!("RTMP listening on: {}", listen_addr);
 
     loop {
         let (client, peer) = listener.accept().await?;
-        let targets = targets.clone();
+        let conf = shared_config.clone();
 
         tokio::spawn(async move {
             info!("Received connection from client: {}", peer);
-            if let Err(e) = server::handle_client(client, targets).await {
+            if let Err(e) = server::handle_client(client, conf).await {
                 error!(error = %e, "connection error");
             }
         });

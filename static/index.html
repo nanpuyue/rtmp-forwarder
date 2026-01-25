@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RTMP Forwarder Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #6366f1;
+            --secondary: #a855f7;
+            --bg: #0f172a;
+            --card-bg: rgba(30, 41, 59, 0.7);
+            --text: #f1f5f9;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: radial-gradient(circle at top left, #1e1b4b, #0f172a);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            padding: 2rem;
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .card {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 24px;
+            padding: 2.5rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        h1 {
+            font-weight: 600;
+            font-size: 2.5rem;
+            margin-bottom: 2rem;
+            background: linear-gradient(to right, #818cf8, #c084fc);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-align: center;
+        }
+
+        .section {
+            margin-bottom: 2rem;
+        }
+
+        .section-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: #94a3b8;
+            margin-bottom: 1rem;
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.95rem;
+            color: #cbd5e1;
+        }
+
+        input,
+        select {
+            width: 100%;
+            height: 40px;
+            padding: 0 1rem;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            color: white;
+            font-family: inherit;
+            box-sizing: border-box;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: block;
+            margin: 0;
+            line-height: 40px;
+            /* Match height for centering text */
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.2);
+            background: rgba(15, 23, 42, 0.8);
+        }
+
+        .upstream-item {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+            animation: slideIn 0.3s ease-out;
+            align-items: center;
+            height: 40px;
+            /* Fixed row height to force center */
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .btn {
+            padding: 0.8rem 1.5rem;
+            border-radius: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: none;
+            font-family: inherit;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            color: white;
+            width: 100%;
+            margin-top: 1rem;
+            font-size: 1rem;
+            box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 20px 25px -5px rgba(99, 102, 241, 0.5);
+        }
+
+        .btn-add {
+            background: rgba(255, 255, 255, 0.05);
+            color: #94a3b8;
+            font-size: 0.85rem;
+            padding: 0.5rem 1rem;
+        }
+
+        .btn-remove {
+            background: rgba(239, 68, 68, 0.1);
+            color: #ef4444;
+            padding: 0;
+            width: 40px;
+            height: 40px;
+            line-height: 40px;
+            border-radius: 12px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            margin: 0;
+        }
+
+        /* iOS Switch */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+            flex-shrink: 0;
+            margin: 0;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(255, 255, 255, 0.1);
+            transition: .4s;
+            border-radius: 24px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 2px;
+            bottom: 2px;
+            background-color: #f1f5f9;
+            transition: .4s;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        input:checked+.slider {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            border-color: var(--primary);
+        }
+
+        input:checked+.slider:before {
+            transform: translateX(20px);
+            background-color: white;
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            padding: 1rem 2rem;
+            background: #10b981;
+            color: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+            display: none;
+            animation: toastIn 0.5s ease;
+        }
+
+        @keyframes toastIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>RTMP Forwarder</h1>
+
+            <div class="section">
+                <span class="section-title">Core Settings</span>
+                <div class="form-group">
+                    <label>RTMP Listen Address</label>
+                    <input type="text" id="listen_addr" placeholder="0.0.0.0:1935" onchange="save()">
+                </div>
+                <div class="form-group">
+                    <label>Log Level</label>
+                    <select id="log_level" onchange="save()">
+                        <option value="trace">Trace</option>
+                        <option value="debug">Debug</option>
+                        <option value="info">Info</option>
+                        <option value="error">Error</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="section">
+                <span class="section-title">Upstreams (Direct Rewrite)</span>
+                <div id="upstreams-container"></div>
+                <button class="btn btn-add" onclick="addUpstream()">+ Add Upstream</button>
+            </div>
+
+            <div class="section">
+                <span class="section-title">Original Relay</span>
+                <div class="upstream-item" style="align-items: center;">
+                    <input type="text" id="relay_addr" placeholder="10.0.1.5:1935" onchange="save()">
+                    <label class="switch">
+                        <input type="checkbox" id="relay_enabled" onchange="save()">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" onclick="save()">Save All Settings</button>
+        </div>
+    </div>
+
+    <div id="toast" class="toast">Success! Configuration updated.</div>
+
+    <script>
+        let config = {};
+
+        function formatRTMP(u) {
+            if (!u.addr) return "";
+            let url = u.addr.startsWith("rtmp://") ? u.addr : "rtmp://" + u.addr;
+            if (u.app) url += "/" + u.app;
+            if (u.stream) url += "/" + u.stream;
+            return url;
+        }
+
+        function parseRTMP(url) {
+            if (!url.startsWith("rtmp://")) return { addr: url, app: null, stream: null };
+            const s = url.slice(7);
+            const [host, ...rest] = s.split('/');
+            const path = rest.join('/');
+            const p = path.split('/');
+            return {
+                addr: host,
+                app: p[0] || null,
+                stream: p[1] || null
+            };
+        }
+
+        async function load() {
+            const res = await fetch('/api/config');
+            config = await res.json();
+
+            document.getElementById('listen_addr').value = config.listen_addr;
+            document.getElementById('log_level').value = config.log_level;
+            document.getElementById('relay_addr').value = config.relay_addr || "";
+            document.getElementById('relay_enabled').checked = config.relay_enabled;
+
+            const container = document.getElementById('upstreams-container');
+            container.innerHTML = "";
+            config.upstreams.forEach((u, i) => addUpstreamUI(u, i));
+        }
+
+        function addUpstreamUI(u = { addr: "", app: "", stream: "", enabled: true }, index) {
+            const container = document.getElementById('upstreams-container');
+            const div = document.createElement('div');
+            div.className = 'upstream-item';
+            div.innerHTML = `
+                <button class="btn btn-remove" onclick="removeUpstream(${index})">×</button>
+                <input type="text" placeholder="rtmp://host:port/app/stream" value="${formatRTMP(u)}" id="upstream_url_${index}" onchange="save()">
+                <label class="switch">
+                    <input type="checkbox" id="upstream_enabled_${index}" ${u.enabled ? 'checked' : ''} onchange="save()">
+                    <span class="slider"></span>
+                </label>
+            `;
+            container.appendChild(div);
+        }
+
+        function addUpstream() {
+            config.upstreams.push({ addr: "", app: "", stream: "", enabled: true });
+            refreshUpstreams();
+            save(); // Save the new empty entry
+        }
+
+        function removeUpstream(i) {
+            config.upstreams.splice(i, 1);
+            refreshUpstreams();
+            save();
+        }
+
+        function refreshUpstreams() {
+            const container = document.getElementById('upstreams-container');
+            container.innerHTML = "";
+            config.upstreams.forEach((u, i) => addUpstreamUI(u, i));
+        }
+
+        async function save() {
+            const upstreams = [];
+            document.querySelectorAll('[id^="upstream_url_"]').forEach((input, i) => {
+                const parsed = parseRTMP(input.value);
+                const enabled = document.getElementById(`upstream_enabled_${i}`).checked;
+                upstreams.push({ ...parsed, enabled });
+            });
+
+            const updated = {
+                listen_addr: document.getElementById('listen_addr').value,
+                log_level: document.getElementById('log_level').value,
+                relay_addr: document.getElementById('relay_addr').value || null,
+                relay_enabled: document.getElementById('relay_enabled').checked,
+                upstreams: upstreams,
+                web_addr: config.web_addr
+            };
+
+            const res = await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updated)
+            });
+
+            if (await res.json()) {
+                const toast = document.getElementById('toast');
+                toast.style.display = 'block';
+                setTimeout(() => toast.style.display = 'none', 2000);
+            }
+        }
+
+        load();
+    </script>
+</body>
+
+</html>
