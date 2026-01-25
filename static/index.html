@@ -122,8 +122,14 @@
             margin-bottom: 1rem;
             animation: slideIn 0.3s ease-out;
             align-items: center;
-            height: 40px;
-            /* Fixed row height to force center */
+        }
+
+        .upstream-item input.addr-input {
+            flex: 2;
+        }
+
+        .upstream-item input.stream-input {
+            flex: 1;
         }
 
         @keyframes slideIn {
@@ -273,11 +279,11 @@
                 <span class="section-title">Core Settings</span>
                 <div class="form-group">
                     <label>RTMP Listen Address</label>
-                    <input type="text" id="listen_addr" placeholder="0.0.0.0:1935" onchange="save()">
+                    <input type="text" id="listen_addr" placeholder="0.0.0.0:1935">
                 </div>
                 <div class="form-group">
                     <label>Log Level</label>
-                    <select id="log_level" onchange="save()">
+                    <select id="log_level">
                         <option value="trace">Trace</option>
                         <option value="debug">Debug</option>
                         <option value="info">Info</option>
@@ -295,7 +301,7 @@
             <div class="section">
                 <span class="section-title">Original Relay</span>
                 <div class="upstream-item" style="align-items: center;">
-                    <input type="text" id="relay_addr" placeholder="10.0.1.5:1935" onchange="save()">
+                    <input type="text" id="relay_addr" placeholder="10.0.1.5:1935">
                     <label class="switch">
                         <input type="checkbox" id="relay_enabled" onchange="save()">
                         <span class="slider"></span>
@@ -312,27 +318,6 @@
     <script>
         let config = {};
 
-        function formatRTMP(u) {
-            if (!u.addr) return "";
-            let url = u.addr.startsWith("rtmp://") ? u.addr : "rtmp://" + u.addr;
-            if (u.app) url += "/" + u.app;
-            if (u.stream) url += "/" + u.stream;
-            return url;
-        }
-
-        function parseRTMP(url) {
-            if (!url.startsWith("rtmp://")) return { addr: url, app: null, stream: null };
-            const s = url.slice(7);
-            const [host, ...rest] = s.split('/');
-            const path = rest.join('/');
-            const p = path.split('/');
-            return {
-                addr: host,
-                app: p[0] || null,
-                stream: p[1] || null
-            };
-        }
-
         async function load() {
             const res = await fetch('/api/config');
             config = await res.json();
@@ -342,36 +327,7 @@
             document.getElementById('relay_addr').value = config.relay_addr || "";
             document.getElementById('relay_enabled').checked = config.relay_enabled;
 
-            const container = document.getElementById('upstreams-container');
-            container.innerHTML = "";
-            config.upstreams.forEach((u, i) => addUpstreamUI(u, i));
-        }
-
-        function addUpstreamUI(u = { addr: "", app: "", stream: "", enabled: true }, index) {
-            const container = document.getElementById('upstreams-container');
-            const div = document.createElement('div');
-            div.className = 'upstream-item';
-            div.innerHTML = `
-                <button class="btn btn-remove" onclick="removeUpstream(${index})">×</button>
-                <input type="text" placeholder="rtmp://host:port/app/stream" value="${formatRTMP(u)}" id="upstream_url_${index}" onchange="save()">
-                <label class="switch">
-                    <input type="checkbox" id="upstream_enabled_${index}" ${u.enabled ? 'checked' : ''} onchange="save()">
-                    <span class="slider"></span>
-                </label>
-            `;
-            container.appendChild(div);
-        }
-
-        function addUpstream() {
-            config.upstreams.push({ addr: "", app: "", stream: "", enabled: true });
             refreshUpstreams();
-            save(); // Save the new empty entry
-        }
-
-        function removeUpstream(i) {
-            config.upstreams.splice(i, 1);
-            refreshUpstreams();
-            save();
         }
 
         function refreshUpstreams() {
@@ -380,13 +336,68 @@
             config.upstreams.forEach((u, i) => addUpstreamUI(u, i));
         }
 
+        function addUpstreamUI(u, index) {
+            const container = document.getElementById('upstreams-container');
+            const div = document.createElement('div');
+            div.className = 'upstream-item';
+
+            // Reconstruct the base URL (addr + app)
+            let base = u.addr;
+            if (base && !base.startsWith("rtmp://")) base = "rtmp://" + base;
+            if (u.app) base += "/" + u.app;
+
+            div.innerHTML = `
+                <button class="btn btn-remove" onclick="removeUpstream(${index})">×</button>
+                <input type="text" class="addr-input" placeholder="rtmp://host:port/app" value="${base || ''}" id="up_addr_${index}">
+                <input type="text" class="stream-input" placeholder="stream" value="${u.stream || ''}" id="up_stream_${index}">
+                <label class="switch">
+                    <input type="checkbox" id="up_enabled_${index}" ${u.enabled ? 'checked' : ''} onchange="save()">
+                    <span class="slider"></span>
+                </label>
+            `;
+            container.appendChild(div);
+        }
+
+        function addUpstream() {
+            config.upstreams.push({ addr: "", app: null, stream: null, enabled: false });
+            refreshUpstreams();
+            // Do NOT save yet
+        }
+
+        function removeUpstream(i) {
+            config.upstreams.splice(i, 1);
+            refreshUpstreams();
+            save(); // Delete still saves immediately
+        }
+
+        function parseAddr(val) {
+            if (!val) return { addr: "", app: null };
+            let s = val.startsWith("rtmp://") ? val.slice(7) : val;
+            const idx = s.indexOf('/');
+            if (idx === -1) return { addr: s, app: null };
+            return {
+                addr: s.substring(0, idx),
+                app: s.substring(idx + 1) || null
+            };
+        }
+
         async function save() {
             const upstreams = [];
-            document.querySelectorAll('[id^="upstream_url_"]').forEach((input, i) => {
-                const parsed = parseRTMP(input.value);
-                const enabled = document.getElementById(`upstream_enabled_${i}`).checked;
-                upstreams.push({ ...parsed, enabled });
-            });
+            // Query all rows
+            const rows = document.getElementById('upstreams-container').children;
+            for (let i = 0; i < rows.length; i++) {
+                const addrVal = document.getElementById(`up_addr_${i}`).value;
+                const streamVal = document.getElementById(`up_stream_${i}`).value;
+                const enabled = document.getElementById(`up_enabled_${i}`).checked;
+
+                const { addr, app } = parseAddr(addrVal);
+                upstreams.push({
+                    addr,
+                    app,
+                    stream: streamVal || null,
+                    enabled
+                });
+            }
 
             const updated = {
                 listen_addr: document.getElementById('listen_addr').value,
@@ -403,7 +414,8 @@
                 body: JSON.stringify(updated)
             });
 
-            if (await res.json()) {
+            if (res.ok) {
+                config = updated; // Update local state
                 const toast = document.getElementById('toast');
                 toast.style.display = 'block';
                 setTimeout(() => toast.style.display = 'none', 2000);
