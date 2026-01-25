@@ -188,9 +188,18 @@ impl TargetActor {
         ]).await?;
 
         // 6. Sync initial state (MetaData + Sequence Headers) so the stream can be decoded instantly
-        if let Some(ref m) = self.snapshot.metadata { write_rtmp_message(w, m, 128).await.ok(); }
-        if let Some(ref v) = self.snapshot.video_seq_hdr { write_rtmp_message(w, v, 128).await.ok(); }
-        if let Some(ref a) = self.snapshot.audio_seq_hdr { write_rtmp_message(w, a, 128).await.ok(); }
+        if let Some(ref m) = self.snapshot.metadata {
+            let mut m = m.clone(); m.timestamp = 0;
+            write_rtmp_message(w, &m, 128).await.ok();
+        }
+        if let Some(ref v) = self.snapshot.video_seq_hdr {
+            let mut v = v.clone(); v.timestamp = 0;
+            write_rtmp_message(w, &v, 128).await.ok();
+        }
+        if let Some(ref a) = self.snapshot.audio_seq_hdr {
+            let mut a = a.clone(); a.timestamp = 0;
+            write_rtmp_message(w, &a, 128).await.ok();
+        }
         Ok(())
     }
 }

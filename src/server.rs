@@ -33,11 +33,10 @@ pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::
         {
             let config = shared_config.read().unwrap();
             let mut expected = Vec::new();
-            if config.relay_enabled {
-                if let Some(ref addr) = config.relay_addr {
+            if config.relay_enabled
+                && let Some(ref addr) = config.relay_addr {
                     expected.push(UpstreamConfig { addr: addr.clone(), app: None, stream: None, enabled: true });
                 }
-            }
             for u in &config.upstreams { if u.enabled { expected.push(u.clone()); } }
 
             active_workers.retain(|key, tx| {
@@ -66,12 +65,10 @@ pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::
         let old_stream = snapshot.client_stream.clone();
         snapshot.update_from_message(&msg);
         
-        if snapshot.client_app != old_app {
-            if let Some(ref a) = snapshot.client_app { info!("client connect: app=\"{}\"", a); }
-        }
-        if snapshot.client_stream != old_stream {
-            if let Some(ref s) = snapshot.client_stream { info!("client publish: stream=\"{}\"", s); }
-        }
+        if snapshot.client_app != old_app
+            && let Some(ref a) = snapshot.client_app { info!("client connect: app=\"{}\"", a); }
+        if snapshot.client_stream != old_stream
+            && let Some(ref s) = snapshot.client_stream { info!("client publish: stream=\"{}\"", s); }
 
         match msg.msg_type {
             1 => if msg.payload.len() >= 4 {
@@ -86,11 +83,11 @@ pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::
                     match cmd.as_str() {
                         "connect" => {
                             // Window Ack Size
-                            write_rtmp_message(&mut client, &RtmpMessage { csid: 2, msg_type: 5, stream_id: 0, payload: BytesMut::from(&2500000u32.to_be_bytes()[..]) }, u2c_chunk).await.ok();
+                            write_rtmp_message(&mut client, &RtmpMessage { csid: 2, timestamp: 0, msg_type: 5, stream_id: 0, payload: BytesMut::from(&2500000u32.to_be_bytes()[..]) }, u2c_chunk).await.ok();
                             // Peer Bandwidth
-                            write_rtmp_message(&mut client, &RtmpMessage { csid: 2, msg_type: 6, stream_id: 0, payload: BytesMut::from(&[0x26, 0x25, 0xa0, 0x00, 0x02][..]) }, u2c_chunk).await.ok();
+                            write_rtmp_message(&mut client, &RtmpMessage { csid: 2, timestamp: 0, msg_type: 6, stream_id: 0, payload: BytesMut::from(&[0x26, 0x25, 0xa0, 0x00, 0x02][..]) }, u2c_chunk).await.ok();
                             // Set Chunk Size
-                            write_rtmp_message(&mut client, &RtmpMessage { csid: 2, msg_type: 1, stream_id: 0, payload: BytesMut::from(&4096u32.to_be_bytes()[..]) }, u2c_chunk).await.ok();
+                            write_rtmp_message(&mut client, &RtmpMessage { csid: 2, timestamp: 0, msg_type: 1, stream_id: 0, payload: BytesMut::from(&4096u32.to_be_bytes()[..]) }, u2c_chunk).await.ok();
                             u2c_chunk = 4096;
                             
                             // _result(connect)
