@@ -20,7 +20,7 @@ impl Default for AppConfig {
             listen_addr: "127.0.0.1:1935".to_string(),
             upstreams: Vec::new(),
             relay_addr: None,
-            relay_enabled: true,
+            relay_enabled: false,
             web_addr: "0.0.0.0:8080".to_string(),
             log_level: "info".to_string(),
         }

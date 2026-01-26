@@ -2,6 +2,7 @@ use crate::amf::amf_command_name;
 use crate::handshake::handshake_with_client;
 use crate::rtmp::{read_rtmp_message, write_rtmp_message, RtmpMessage};
 use crate::forwarder::{ForwardEvent, ProtocolSnapshot, TargetActor};
+use crate::web::FlvStreamManager;
 use anyhow::Result;
 use bytes::BytesMut;
 use tokio::net::TcpStream;
@@ -17,7 +18,7 @@ pub struct UpstreamConfig {
     pub enabled: bool,
 }
 
-pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::SharedConfig) -> Result<()> {
+pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::SharedConfig, flv_manager: std::sync::Arc<FlvStreamManager>) -> Result<()> {
     client.set_nodelay(true)?;
     handshake_with_client(&mut client).await?;
 
@@ -123,6 +124,10 @@ pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::
         for tx in active_workers.values() {
             let _ = tx.try_send(ForwardEvent::Message(msg.clone()));
         }
+        
+        // 4. Handle HTTP-FLV streaming - 固定使用 "stream" 作为流名称
+        tracing::debug!("Server: Forwarding RTMP message to FLV manager for fixed stream: stream");
+        flv_manager.handle_rtmp_message("stream", &msg).await;
     }
 
     for tx in active_workers.values() {
