@@ -2,6 +2,7 @@ use crate::amf::amf_command_name;
 use crate::handshake::handshake_with_client;
 use crate::rtmp::{read_rtmp_message, write_rtmp_message, RtmpMessage};
 use crate::forwarder::{ForwardEvent, ProtocolSnapshot, TargetActor};
+use crate::web::FlvStreamManager;
 use anyhow::Result;
 use bytes::BytesMut;
 use tokio::net::TcpStream;
@@ -27,6 +28,9 @@ pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::
 
     let mut active_workers: std::collections::HashMap<String, mpsc::Sender<ForwardEvent>> = std::collections::HashMap::new();
     let mut snapshot = ProtocolSnapshot::default();
+    
+    // HTTP-FLV流管理器
+    let flv_manager = std::sync::Arc::new(FlvStreamManager::new());
 
     loop {
         // 1. Sync targets
@@ -122,6 +126,14 @@ pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::
         // 3. Dispatch to all workers
         for tx in active_workers.values() {
             let _ = tx.try_send(ForwardEvent::Message(msg.clone()));
+        }
+        
+        // 4. Handle HTTP-FLV streaming
+        if let Some(ref stream_name) = snapshot.client_stream {
+            tracing::debug!("Server: Forwarding RTMP message to FLV manager for stream: {}", stream_name);
+            let _ = flv_manager.handle_rtmp_message(stream_name, &msg).await;
+        } else {
+            tracing::debug!("Server: No stream name available for RTMP message type: {}", msg.msg_type);
         }
     }
 

@@ -8,6 +8,8 @@ mod server;
 mod web;
 mod forwarder;
 
+use crate::web::FlvStreamManager;
+
 use anyhow::Result;
 use clap::Parser;
 use std::sync::{Arc, RwLock};
@@ -100,8 +102,9 @@ async fn main() -> Result<()> {
 
     // 3. Start Web Server
     let web_conf = shared_config.clone();
+    let flv_manager = std::sync::Arc::new(FlvStreamManager::new());
     tokio::spawn(async move {
-        web::start_web_server(web_conf).await;
+        web::start_web_server(web_conf, flv_manager).await;
     });
 
     // Bind the listening socket based on current config

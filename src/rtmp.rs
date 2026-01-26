@@ -171,7 +171,7 @@ where S: tokio::io::AsyncWrite + Unpin {
 
 /* ================= misc ================= */
 
-trait PutU24 {
+pub trait PutU24 {
     fn put_u24(&mut self, v: u32);
 }
 impl PutU24 for BytesMut {
