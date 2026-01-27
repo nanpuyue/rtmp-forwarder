@@ -279,7 +279,7 @@
             <div class="section">
                 <span class="section-title">Video Preview</span>
                 <div style="background: #000; border-radius: 12px; padding: 1rem; margin-bottom: 1rem;">
-                    <video id="video" controls autoplay style="width: 100%; height: auto; background: black; border-radius: 8px;"></video>
+                    <video id="video" controls autoplay muted style="width: 100%; height: auto; background: black; border-radius: 8px;"></video>
                 </div>
                 <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
                     <button class="btn btn-add" onclick="startStream()" style="flex: 1;">Play</button>
@@ -348,9 +348,26 @@
                 player = flvjs.createPlayer({
                     type: 'flv',
                     url: `/live/stream.flv?t=${Date.now()}`,
-                    enableWorker: true,
+                    enableWorker: false,
+                    enableStashBuffer: true,
+                    stashInitialSize: 128,
+                    autoCleanupSourceBuffer: true,
+                    autoCleanupMaxBackwardDuration: 3,
+                    autoCleanupMinBackwardDuration: 2,
+                    fixAudioTimestampGap: false,
+                    accurateSeek: false,
+                    seekType: 'range',
+                    seekParamStart: 'bstart',
+                    seekParamEnd: 'bend',
+                    rangeLoadZeroStart: false,
+                    lazyLoad: true,
+                    lazyLoadMaxDuration: 3 * 60,
+                    lazyLoadRecoverDuration: 30,
+                    deferLoadAfterSourceOpen: true,
+                    autoCleanupSourceBuffer: true,
+                    enableWorker: false,
                     enableStashBuffer: false,
-                    autoCleanupSourceBuffer: true
+                    stashInitialSize: 128
                 });
                 
                 player.attachMediaElement(document.getElementById('video'));
