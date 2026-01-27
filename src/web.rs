@@ -77,11 +77,10 @@ async fn get_config(Extension(config): Extension<SharedConfig>) -> Json<AppConfi
     Json(c.clone())
 }
 
-async fn get_streams(Extension(manager): Extension<std::sync::Arc<FlvStreamManager>>) -> Json<Vec<String>> {
-    let streams = manager.streams.read().await;
-    let stream_ids: Vec<String> = streams.keys().cloned().collect();
-    tracing::info!("HTTP API: Stream list requested, found {} streams: {:?}", stream_ids.len(), stream_ids);
-    Json(stream_ids)
+async fn get_streams(Extension(_manager): Extension<std::sync::Arc<FlvStreamManager>>) -> Json<Vec<String>> {
+    // 固定返回单一流 "stream"
+    tracing::info!("HTTP API: Stream list requested, returning fixed stream: stream");
+    Json(vec!["stream".to_string()])
 }
 
 async fn update_config(
@@ -374,19 +373,13 @@ impl FlvStreamManager {
 
 /// HTTP-FLV流处理器
 pub async fn handle_flv_stream(
-    Path(stream_id): Path<String>,
+    Path(_stream_id): Path<String>,
     Extension(manager): Extension<std::sync::Arc<FlvStreamManager>>,
 ) -> impl IntoResponse {
-    tracing::info!("HTTP-FLV: Request for stream: {}", stream_id);
+    tracing::info!("HTTP-FLV: Request for fixed stream: stream");
     
-    // 移除 .flv 后缀（如果存在）
-    let stream_name = if stream_id.ends_with(".flv") {
-        stream_id.strip_suffix(".flv").unwrap().to_string()
-    } else {
-        stream_id
-    };
-    
-    tracing::info!("HTTP-FLV: Looking for stream: {}", stream_name);
+    // 固定使用 "stream" 作为流名称
+    let stream_name = "stream".to_string();
     
     // 检查流是否存在且支持H.264+AAC
     let streams = manager.streams.read().await;

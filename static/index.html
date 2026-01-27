@@ -1,430 +1,332 @@
 <!DOCTYPE html>
-<html lang="en">
-
+<html>
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RTMP Forwarder Dashboard</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <title>RTMP Forwarder - 配置与预览</title>
     <style>
-        :root {
-            --primary: #6366f1;
-            --secondary: #a855f7;
-            --bg: #0f172a;
-            --card-bg: rgba(30, 41, 59, 0.7);
-            --text: #f1f5f9;
-        }
-
-        body {
-            font-family: 'Outfit', sans-serif;
-            background: radial-gradient(circle at top left, #1e1b4b, #0f172a);
-            color: var(--text);
-            margin: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            overflow-x: hidden;
-        }
-
-        .container {
-            width: 100%;
-            max-width: 800px;
-            padding: 2rem;
-            animation: fadeIn 0.8s ease-out;
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .card {
-            background: var(--card-bg);
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 24px;
-            padding: 2.5rem;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-        }
-
-        h1 {
-            font-weight: 600;
-            font-size: 2.5rem;
-            margin-bottom: 2rem;
-            background: linear-gradient(to right, #818cf8, #c084fc);
-            -webkit-background-clip: text;
-            background-clip: text;
-            -webkit-text-fill-color: transparent;
-            text-align: center;
-        }
-
-        .section {
-            margin-bottom: 2rem;
-        }
-
-        .section-title {
-            font-size: 0.9rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: #94a3b8;
-            margin-bottom: 1rem;
-            display: block;
-        }
-
-        .form-group {
-            margin-bottom: 1.5rem;
-        }
-
-        label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-size: 0.95rem;
-            color: #cbd5e1;
-        }
-
-        input,
-        select {
-            width: 100%;
-            height: 40px;
-            padding: 0 1rem;
-            background: rgba(15, 23, 42, 0.6);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
-            color: white;
-            font-family: inherit;
-            box-sizing: border-box;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            display: block;
-            margin: 0;
-            line-height: 40px;
-            /* Match height for centering text */
-        }
-
-        input:focus {
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.2);
-            background: rgba(15, 23, 42, 0.8);
-        }
-
-        .upstream-item {
-            display: flex;
-            gap: 0.75rem;
-            margin-bottom: 1rem;
-            animation: slideIn 0.3s ease-out;
-            align-items: center;
-        }
-
-        .upstream-item input.addr-input {
-            flex: 2;
-        }
-
-        .upstream-item input.stream-input {
-            flex: 1;
-        }
-
-        @keyframes slideIn {
-            from {
-                opacity: 0;
-                transform: translateX(-10px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateX(0);
-            }
-        }
-
-        .btn {
-            padding: 0.8rem 1.5rem;
-            border-radius: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-            border: none;
-            font-family: inherit;
-        }
-
-        .btn-primary {
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
-            color: white;
-            width: 100%;
-            margin-top: 1rem;
-            font-size: 1rem;
-            box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.4);
-        }
-
-        .btn-primary:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 20px 25px -5px rgba(99, 102, 241, 0.5);
-        }
-
-        .btn-add {
-            background: rgba(255, 255, 255, 0.05);
-            color: #94a3b8;
-            font-size: 0.85rem;
-            padding: 0.5rem 1rem;
-        }
-
-        .btn-remove {
-            background: rgba(239, 68, 68, 0.1);
-            color: #ef4444;
-            padding: 0;
-            width: 40px;
-            height: 40px;
-            line-height: 40px;
-            border-radius: 12px;
-            flex-shrink: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem;
-            margin: 0;
-        }
-
-        /* iOS Switch */
-        .switch {
-            position: relative;
-            display: inline-block;
-            width: 44px;
-            height: 24px;
-            flex-shrink: 0;
-            margin: 0;
-        }
-
-        .switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-
-        .slider {
-            position: absolute;
-            cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: rgba(255, 255, 255, 0.1);
-            transition: .4s;
-            border-radius: 24px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        .slider:before {
-            position: absolute;
-            content: "";
-            height: 18px;
-            width: 18px;
-            left: 2px;
-            bottom: 2px;
-            background-color: #f1f5f9;
-            transition: .4s;
-            border-radius: 50%;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-        }
-
-        input:checked+.slider {
-            background: linear-gradient(135deg, var(--primary), var(--secondary));
-            border-color: var(--primary);
-        }
-
-        input:checked+.slider:before {
-            transform: translateX(20px);
-            background-color: white;
-        }
-
-        .toast {
-            position: fixed;
-            bottom: 2rem;
-            right: 2rem;
-            padding: 1rem 2rem;
-            background: #10b981;
-            color: white;
-            border-radius: 12px;
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
-            display: none;
-            animation: toastIn 0.5s ease;
-        }
-
-        @keyframes toastIn {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
+        body { font-family: Arial, sans-serif; background: #1a1a1a; color: #ffffff; margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { background: #2d2d2d; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        .header h1 { margin: 0; font-size: 24px; }
+        .header p { margin: 5px 0 0 0; color: #ccc; }
+        
+        .main-content { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        
+        .panel { background: #2d2d2d; padding: 20px; border-radius: 8px; }
+        .panel h2 { margin-top: 0; font-size: 18px; border-bottom: 1px solid #444; padding-bottom: 10px; }
+        
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-size: 14px; color: #ccc; }
+        .form-group input, .form-group select { width: 100%; padding: 8px; background: #404040; border: 1px solid #555; border-radius: 4px; color: white; box-sizing: border-box; }
+        .form-group input[type="checkbox"] { width: auto; }
+        
+        .btn { background: #007bff; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .btn:hover { background: #0056b3; }
+        .btn.secondary { background: #6c757d; }
+        .btn.secondary:hover { background: #545b62; }
+        
+        .status { padding: 10px; background: #404040; border-radius: 4px; margin-bottom: 15px; font-size: 14px; }
+        .status.success { background: #28a745; color: white; }
+        .status.error { background: #dc3545; color: white; }
+        .status.warning { background: #ffc107; color: #333; }
+        
+        .video-container { background: #000; border-radius: 8px; padding: 10px; }
+        video { width: 100%; height: auto; background: black; border-radius: 4px; }
+        
+        .controls { margin-top: 10px; display: flex; gap: 10px; }
+        .controls button { flex: 1; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+        .controls .play-btn { background: #28a745; color: white; }
+        .controls .play-btn:hover { background: #218838; }
+        .controls .stop-btn { background: #dc3545; color: white; }
+        .controls .stop-btn:hover { background: #c82333; }
+        .controls .mute-btn { background: #6c757d; color: white; }
+        .controls .mute-btn:hover { background: #545b62; }
+        
+        .log { background: #000; border: 1px solid #444; border-radius: 4px; padding: 10px; height: 200px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+        .log-line { margin-bottom: 2px; }
+        .log-line.info { color: #ccc; }
+        .log-line.error { color: #ff6b6b; }
+        .log-line.success { color: #51cf66; }
+        
+        @media (max-width: 768px) {
+            .main-content { grid-template-columns: 1fr; }
         }
     </style>
+    <script src="flv.min.js"></script>
 </head>
-
 <body>
     <div class="container">
-        <div class="card">
+        <div class="header">
             <h1>RTMP Forwarder</h1>
-
-            <div class="section">
-                <span class="section-title">Core Settings</span>
+            <p>配置与预览控制面板</p>
+        </div>
+        
+        <div class="main-content">
+            <!-- 配置面板 -->
+            <div class="panel">
+                <h2>配置设置</h2>
+                
+                <div id="config-status" class="status">正在加载配置...</div>
+                
                 <div class="form-group">
-                    <label>RTMP Listen Address</label>
-                    <input type="text" id="listen_addr" placeholder="0.0.0.0:1935">
+                    <label>监听地址</label>
+                    <input type="text" id="listen-addr" placeholder="127.0.0.1:1935">
                 </div>
+                
                 <div class="form-group">
-                    <label>Log Level</label>
-                    <select id="log_level">
-                        <option value="trace">Trace</option>
-                        <option value="debug">Debug</option>
+                    <label>上游地址</label>
+                    <input type="text" id="upstream-addr" placeholder="rtmp://upstream-server:1935/app/stream">
+                </div>
+                
+                <div class="form-group">
+                    <label>日志级别</label>
+                    <select id="log-level">
                         <option value="info">Info</option>
+                        <option value="debug">Debug</option>
+                        <option value="warn">Warn</option>
                         <option value="error">Error</option>
                     </select>
                 </div>
-            </div>
-
-            <div class="section">
-                <span class="section-title">Upstreams (Direct Rewrite)</span>
-                <div id="upstreams-container"></div>
-                <button class="btn btn-add" onclick="addUpstream()">+ Add Upstream</button>
-            </div>
-
-            <div class="section">
-                <span class="section-title">Original Relay</span>
-                <div class="upstream-item" style="align-items: center;">
-                    <input type="text" id="relay_addr" placeholder="10.0.1.5:1935">
-                    <label class="switch">
-                        <input type="checkbox" id="relay_enabled" onchange="save()">
-                        <span class="slider"></span>
+                
+                <div class="form-group">
+                    <label>Web 地址</label>
+                    <input type="text" id="web-addr" placeholder="0.0.0.0:8080">
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="relay-enabled"> 启用中继模式
                     </label>
                 </div>
+                
+                <div class="form-group">
+                    <label>中继地址</label>
+                    <input type="text" id="relay-addr" placeholder="rtmp://relay-server:1935/app/stream" disabled>
+                </div>
+                
+                <div class="controls" style="margin-top: 0;">
+                    <button class="btn" onclick="saveConfig()">保存配置</button>
+                    <button class="btn secondary" onclick="loadConfig()">刷新配置</button>
+                </div>
+                
+                <div style="margin-top: 20px;">
+                    <h3>操作日志</h3>
+                    <div id="log" class="log"></div>
+                </div>
             </div>
-
-            <button class="btn btn-primary" onclick="save()">Save All Settings</button>
-            <a href="/preview.html" class="btn btn-primary" style="display: inline-block; text-decoration: none; margin-left: 10px;">Stream Preview</a>
+            
+            <!-- 预览面板 -->
+            <div class="panel">
+                <h2>视频预览</h2>
+                
+                <div id="preview-status" class="status">等待流数据...</div>
+                
+                <div class="video-container">
+                    <video id="video" controls autoplay></video>
+                </div>
+                
+                <div class="controls">
+                    <button class="play-btn" onclick="startStream()">开始播放</button>
+                    <button class="stop-btn" onclick="stopStream()">停止播放</button>
+                    <button class="mute-btn" onclick="toggleMute()">静音/取消静音</button>
+                </div>
+                
+                <div style="margin-top: 15px;">
+                    <h3>流信息</h3>
+                    <div id="stream-info" class="status">流状态: 未连接</div>
+                </div>
+            </div>
         </div>
     </div>
 
-    <div id="toast" class="toast">Success! Configuration updated.</div>
-
     <script>
-        let config = {};
-
-        async function load() {
-            const res = await fetch('/api/config');
-            config = await res.json();
-
-            document.getElementById('listen_addr').value = config.listen_addr;
-            document.getElementById('log_level').value = config.log_level;
-            document.getElementById('relay_addr').value = config.relay_addr || "";
-            document.getElementById('relay_enabled').checked = config.relay_enabled;
-
-            refreshUpstreams();
+        let player = null;
+        let isPlaying = false;
+        let logElement = document.getElementById('log');
+        
+        // 日志函数
+        function addLog(message, type = 'info') {
+            const line = document.createElement('div');
+            line.className = `log-line ${type}`;
+            line.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logElement.appendChild(line);
+            logElement.scrollTop = logElement.scrollHeight;
         }
-
-        function refreshUpstreams() {
-            const container = document.getElementById('upstreams-container');
-            container.innerHTML = "";
-            config.upstreams.forEach((u, i) => addUpstreamUI(u, i));
+        
+        // 配置相关函数
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                const config = await response.json();
+                
+                document.getElementById('listen-addr').value = config.listen_addr;
+                document.getElementById('upstream-addr').value = config.upstreams[0]?.addr || '';
+                document.getElementById('log-level').value = config.log_level;
+                document.getElementById('web-addr').value = config.web_addr;
+                document.getElementById('relay-enabled').checked = config.relay_enabled;
+                document.getElementById('relay-addr').value = config.relay_addr || '';
+                document.getElementById('relay-addr').disabled = !config.relay_enabled;
+                
+                document.getElementById('config-status').className = 'status success';
+                document.getElementById('config-status').textContent = '配置加载成功';
+                addLog('配置加载成功', 'success');
+            } catch (error) {
+                document.getElementById('config-status').className = 'status error';
+                document.getElementById('config-status').textContent = '配置加载失败: ' + error.message;
+                addLog('配置加载失败: ' + error.message, 'error');
+            }
         }
-
-        function addUpstreamUI(u, index) {
-            const container = document.getElementById('upstreams-container');
-            const div = document.createElement('div');
-            div.className = 'upstream-item';
-
-            // Reconstruct the base URL (addr + app)
-            let base = u.addr;
-            if (base && !base.startsWith("rtmp://")) base = "rtmp://" + base;
-            if (u.app) base += "/" + u.app;
-
-            div.innerHTML = `
-                <button class="btn btn-remove" onclick="removeUpstream(${index})">×</button>
-                <input type="text" class="addr-input" placeholder="rtmp://host:port/app" value="${base || ''}" id="up_addr_${index}">
-                <input type="text" class="stream-input" placeholder="stream" value="${u.stream || ''}" id="up_stream_${index}">
-                <label class="switch">
-                    <input type="checkbox" id="up_enabled_${index}" ${u.enabled ? 'checked' : ''} onchange="save()">
-                    <span class="slider"></span>
-                </label>
-            `;
-            container.appendChild(div);
-        }
-
-        function addUpstream() {
-            config.upstreams.push({ addr: "", app: null, stream: null, enabled: false });
-            refreshUpstreams();
-            // Do NOT save yet
-        }
-
-        function removeUpstream(i) {
-            config.upstreams.splice(i, 1);
-            refreshUpstreams();
-            save(); // Delete still saves immediately
-        }
-
-        function parseAddr(val) {
-            if (!val) return { addr: "", app: null };
-            let s = val.startsWith("rtmp://") ? val.slice(7) : val;
-            const idx = s.indexOf('/');
-            if (idx === -1) return { addr: s, app: null };
-            return {
-                addr: s.substring(0, idx),
-                app: s.substring(idx + 1) || null
+        
+        async function saveConfig() {
+            const config = {
+                listen_addr: document.getElementById('listen-addr').value,
+                upstreams: [{
+                    addr: document.getElementById('upstream-addr').value,
+                    app: null,
+                    stream: null,
+                    enabled: true
+                }],
+                log_level: document.getElementById('log-level').value,
+                web_addr: document.getElementById('web-addr').value,
+                relay_enabled: document.getElementById('relay-enabled').checked,
+                relay_addr: document.getElementById('relay-addr').value
             };
-        }
-
-        async function save() {
-            const upstreams = [];
-            // Query all rows
-            const rows = document.getElementById('upstreams-container').children;
-            for (let i = 0; i < rows.length; i++) {
-                const addrVal = document.getElementById(`up_addr_${i}`).value;
-                const streamVal = document.getElementById(`up_stream_${i}`).value;
-                const enabled = document.getElementById(`up_enabled_${i}`).checked;
-
-                const { addr, app } = parseAddr(addrVal);
-                upstreams.push({
-                    addr,
-                    app,
-                    stream: streamVal || null,
-                    enabled
+            
+            try {
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
                 });
-            }
-
-            const updated = {
-                listen_addr: document.getElementById('listen_addr').value,
-                log_level: document.getElementById('log_level').value,
-                relay_addr: document.getElementById('relay_addr').value || null,
-                relay_enabled: document.getElementById('relay_enabled').checked,
-                upstreams: upstreams,
-                web_addr: config.web_addr
-            };
-
-            const res = await fetch('/api/config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(updated)
-            });
-
-            if (res.ok) {
-                config = updated; // Update local state
-                const toast = document.getElementById('toast');
-                toast.style.display = 'block';
-                setTimeout(() => toast.style.display = 'none', 2000);
+                
+                const success = await response.json();
+                
+                if (success) {
+                    document.getElementById('config-status').className = 'status success';
+                    document.getElementById('config-status').textContent = '配置保存成功';
+                    addLog('配置保存成功', 'success');
+                } else {
+                    document.getElementById('config-status').className = 'status error';
+                    document.getElementById('config-status').textContent = '配置保存失败';
+                    addLog('配置保存失败', 'error');
+                }
+            } catch (error) {
+                document.getElementById('config-status').className = 'status error';
+                document.getElementById('config-status').textContent = '配置保存失败: ' + error.message;
+                addLog('配置保存失败: ' + error.message, 'error');
             }
         }
-
-        load();
+        
+        // 预览相关函数
+        function updatePreviewStatus(message) {
+            document.getElementById('preview-status').textContent = message;
+        }
+        
+        function updateStreamInfo(message) {
+            document.getElementById('stream-info').textContent = message;
+        }
+        
+        function startStream() {
+            if (isPlaying) {
+                updatePreviewStatus('播放器已在运行');
+                return;
+            }
+            
+            if (player) {
+                player.destroy();
+                player = null;
+            }
+            
+            if (!flvjs.isSupported()) {
+                updatePreviewStatus('浏览器不支持 FLV 播放');
+                addLog('浏览器不支持 FLV 播放', 'error');
+                return;
+            }
+            
+            try {
+                player = flvjs.createPlayer({
+                    type: 'flv',
+                    url: '/live/stream.flv'
+                });
+                
+                player.attachMediaElement(document.getElementById('video'));
+                player.load();
+                
+                player.on(flvjs.Events.ERROR, function (errType, errDetail) {
+                    updatePreviewStatus('播放错误: ' + errType + ' - ' + errDetail);
+                    updateStreamInfo('流状态: 播放错误');
+                    addLog('播放错误: ' + errType + ' - ' + errDetail, 'error');
+                    console.error('FLV Player Error:', errType, errDetail);
+                });
+                
+                player.on(flvjs.Events.LOADING_COMPLETE, function () {
+                    updatePreviewStatus('加载完成');
+                    addLog('FLV 流加载完成', 'success');
+                });
+                
+                player.on(flvjs.Events.METADATA_ARRIVED, function () {
+                    updatePreviewStatus('元数据已到达，开始播放');
+                    updateStreamInfo('流状态: 正在播放');
+                    addLog('FLV 流元数据到达', 'success');
+                });
+                
+                player.on(flvjs.Events.RENDERED, function () {
+                    updatePreviewStatus('视频已渲染');
+                    addLog('FLV 流视频渲染完成', 'success');
+                });
+                
+                player.play();
+                isPlaying = true;
+                updatePreviewStatus('正在播放 FLV 流');
+                updateStreamInfo('流状态: 正在播放');
+                addLog('开始播放 FLV 流', 'success');
+                
+            } catch (error) {
+                updatePreviewStatus('播放器初始化失败: ' + error.message);
+                updateStreamInfo('流状态: 初始化失败');
+                addLog('播放器初始化失败: ' + error.message, 'error');
+                console.error('Player Error:', error);
+            }
+        }
+        
+        function stopStream() {
+            if (player) {
+                player.pause();
+                player.unload();
+                player.detachMediaElement();
+                player.destroy();
+                player = null;
+            }
+            isPlaying = false;
+            updatePreviewStatus('播放已停止');
+            updateStreamInfo('流状态: 已停止');
+            addLog('播放已停止', 'info');
+        }
+        
+        function toggleMute() {
+            const video = document.getElementById('video');
+            video.muted = !video.muted;
+            updatePreviewStatus('静音状态已切换: ' + (video.muted ? '已静音' : '未静音'));
+            addLog('静音状态切换: ' + (video.muted ? '已静音' : '未静音'), 'info');
+        }
+        
+        // 中继开关事件
+        document.getElementById('relay-enabled').addEventListener('change', function() {
+            document.getElementById('relay-addr').disabled = !this.checked;
+        });
+        
+        // 页面加载时初始化
+        window.onload = function() {
+            loadConfig();
+            addLog('页面加载完成，准备开始播放', 'info');
+            // 自动开始播放
+            setTimeout(startStream, 1000);
+        };
+        
+        // 页面关闭时停止播放
+        window.onbeforeunload = function() {
+            stopStream();
+        };
     </script>
 </body>
-
 </html>

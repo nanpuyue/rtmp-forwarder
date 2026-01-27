@@ -125,13 +125,9 @@ pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::
             let _ = tx.try_send(ForwardEvent::Message(msg.clone()));
         }
         
-        // 4. Handle HTTP-FLV streaming
-        if let Some(ref stream_name) = snapshot.client_stream {
-            tracing::debug!("Server: Forwarding RTMP message to FLV manager for stream: {}", stream_name);
-            flv_manager.handle_rtmp_message(stream_name, &msg).await;
-        } else {
-            tracing::debug!("Server: No stream name available for RTMP message type: {}", msg.msg_type);
-        }
+        // 4. Handle HTTP-FLV streaming - 固定使用 "stream" 作为流名称
+        tracing::debug!("Server: Forwarding RTMP message to FLV manager for fixed stream: stream");
+        flv_manager.handle_rtmp_message("stream", &msg).await;
     }
 
     for tx in active_workers.values() {
