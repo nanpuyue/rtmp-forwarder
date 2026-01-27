@@ -30,6 +30,7 @@ pub enum StreamMessage {
 pub struct StreamSnapshot {
     pub app_name: String,
     pub stream_key: String,
+    pub metadata: Option<Bytes>,
     pub video_seq_hdr: Option<Bytes>,
     pub audio_seq_hdr: Option<Bytes>,
 }
@@ -43,6 +44,7 @@ pub struct StreamInfo {
     pub publishing_client: Option<u32>,
     pub created_at: Instant,
     pub last_active: Instant,
+    pub metadata: Option<Bytes>,
     pub video_seq_hdr: Option<Bytes>,
     pub audio_seq_hdr: Option<Bytes>,
 }
@@ -81,6 +83,9 @@ impl StreamManager {
         if let Some(s) = stream.as_mut() {
             if s.state == StreamState::Publishing {
                 match msg.msg_type {
+                    18 | 15 => {
+                        s.metadata = Some(msg.payload.clone().freeze());
+                    }
                     9 if msg.payload.len() >= 2 && msg.payload[0] == 0x17 && msg.payload[1] == 0 => {
                         s.video_seq_hdr = Some(msg.payload.clone().freeze());
                     }
@@ -104,6 +109,7 @@ impl StreamManager {
             .map(|s| StreamSnapshot {
                 app_name: s.app_name.clone(),
                 stream_key: s.stream_key.clone(),
+                metadata: s.metadata.clone(),
                 video_seq_hdr: s.video_seq_hdr.clone(),
                 audio_seq_hdr: s.audio_seq_hdr.clone(),
             })
@@ -138,6 +144,7 @@ impl StreamManager {
                     publishing_client: None,
                     created_at: Instant::now(),
                     last_active: Instant::now(),
+                    metadata: None,
                     video_seq_hdr: None,
                     audio_seq_hdr: None,
                 });
@@ -161,6 +168,7 @@ impl StreamManager {
                 s.stream_key = stream_key.to_string();
                 s.app_name = app_name.to_string();
                 s.last_active = Instant::now();
+                s.metadata = None;
                 s.video_seq_hdr = None;
                 s.audio_seq_hdr = None;
                 drop(stream);
@@ -213,6 +221,7 @@ impl StreamManager {
                 drop(stream);
                 
                 self.state_change_tx.send(StreamEvent::StreamClosed).ok();
+                self.message_tx.send(StreamMessage::StateChanged(StreamEvent::StreamClosed)).ok();
             }
         }
         Ok(())
@@ -237,12 +246,14 @@ impl StreamManager {
                     drop(stream);
                     
                     self.state_change_tx.send(StreamEvent::StreamClosed).ok();
+                    self.message_tx.send(StreamMessage::StateChanged(StreamEvent::StreamClosed)).ok();
                 }
                 StreamState::Closed => {
                     *stream = None;
                     drop(stream);
                     
                     self.state_change_tx.send(StreamEvent::StreamDeleted).ok();
+                    self.message_tx.send(StreamMessage::StateChanged(StreamEvent::StreamDeleted)).ok();
                 }
             }
         }

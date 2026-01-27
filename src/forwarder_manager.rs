@@ -58,7 +58,7 @@ impl ForwarderManager {
                                         self.start_forwarders(&mut forwarders, snapshot).await;
                                     }
                                 }
-                                StreamEvent::StreamIdle | StreamEvent::StreamDeleted => {
+                                StreamEvent::StreamIdle | StreamEvent::StreamClosed | StreamEvent::StreamDeleted => {
                                     info!("Stream stopped, stopping forwarders");
                                     self.stop_forwarders(&mut forwarders).await;
                                     current_snapshot = None;
@@ -74,10 +74,17 @@ impl ForwarderManager {
                         ForwarderCommand::UpdateConfig(new_config) => {
                             info!("Received config update with {} upstreams", new_config.len());
                             *self.config.write().await = new_config;
-                            if let Some(ref snapshot) = current_snapshot {
-                                info!("Stream is active, restarting forwarders with new config");
-                                self.stop_forwarders(&mut forwarders).await;
-                                self.start_forwarders(&mut forwarders, snapshot.clone()).await;
+                            if current_snapshot.is_some() {
+                                if let Some(snapshot) = self.stream_manager.get_stream_snapshot().await {
+                                    info!("Stream is active, restarting forwarders with new config");
+                                    self.stop_forwarders(&mut forwarders).await;
+                                    current_snapshot = Some(snapshot.clone());
+                                    self.start_forwarders(&mut forwarders, snapshot).await;
+                                } else {
+                                    info!("Stream no longer active");
+                                    self.stop_forwarders(&mut forwarders).await;
+                                    current_snapshot = None;
+                                }
                             } else {
                                 info!("No active stream, config will be applied on next publish");
                             }
@@ -113,9 +120,27 @@ impl ForwarderManager {
                 config: upstream.clone(),
                 rx,
                 snapshot: crate::forwarder::ProtocolSnapshot {
-                    metadata: None,
-                    video_seq_hdr: None,
-                    audio_seq_hdr: None,
+                    metadata: snapshot.metadata.as_ref().map(|b| crate::rtmp::RtmpMessage {
+                        csid: 3,
+                        timestamp: 0,
+                        msg_type: 18,
+                        stream_id: 1,
+                        payload: bytes::BytesMut::from(b.as_ref()),
+                    }),
+                    video_seq_hdr: snapshot.video_seq_hdr.as_ref().map(|b| crate::rtmp::RtmpMessage {
+                        csid: 4,
+                        timestamp: 0,
+                        msg_type: 9,
+                        stream_id: 1,
+                        payload: bytes::BytesMut::from(b.as_ref()),
+                    }),
+                    audio_seq_hdr: snapshot.audio_seq_hdr.as_ref().map(|b| crate::rtmp::RtmpMessage {
+                        csid: 5,
+                        timestamp: 0,
+                        msg_type: 8,
+                        stream_id: 1,
+                        payload: bytes::BytesMut::from(b.as_ref()),
+                    }),
                     client_app: Some(snapshot.app_name.clone()),
                     client_stream: Some(snapshot.stream_key.clone()),
                 },
