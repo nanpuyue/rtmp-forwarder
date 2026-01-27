@@ -27,7 +27,6 @@ pub async fn start_web_server(config: SharedConfig, flv_manager: std::sync::Arc<
     let app = Router::new()
         .route("/api/config", get(get_config))
         .route("/api/config", post(update_config))
-        .route("/api/streams", get(get_streams))
         .route("/live/:stream_id.flv", get(handle_flv_stream))
         .fallback(static_handler)
         .layer(Extension(config))
@@ -75,9 +74,6 @@ async fn get_config(Extension(config): Extension<SharedConfig>) -> Json<AppConfi
     Json(c.clone())
 }
 
-async fn get_streams(Extension(_manager): Extension<std::sync::Arc<FlvManager>>) -> Json<Vec<String>> {
-    Json(vec!["stream".to_string()])
-}
 
 async fn update_config(
     Extension(config): Extension<SharedConfig>,
