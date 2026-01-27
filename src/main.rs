@@ -7,6 +7,7 @@ mod rtmp;
 mod server;
 mod web;
 mod forwarder;
+mod stream_manager;
 
 use crate::web::FlvStreamManager;
 
