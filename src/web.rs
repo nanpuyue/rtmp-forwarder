@@ -235,6 +235,17 @@ impl FlvStreamManager {
                 flv_tag.put_u32((msg.payload.len() + 11) as u32);
                 Some(flv_tag.freeze())
             }
+            8 => {
+                let mut flv_tag = BytesMut::new();
+                flv_tag.put_u8(0x08);
+                flv_tag.put_u24(msg.payload.len() as u32);
+                flv_tag.put_u24(timestamp & 0xFFFFFF);
+                flv_tag.put_u8(((timestamp >> 24) & 0xFF) as u8);
+                flv_tag.put_u24(0);
+                flv_tag.extend_from_slice(&msg.payload);
+                flv_tag.put_u32((msg.payload.len() + 11) as u32);
+                Some(flv_tag.freeze())
+            }
             _ => self.convert_to_flv(msg)
         }
     }
@@ -250,13 +261,11 @@ impl FlvStreamManager {
                 flv_tag.put_u8(0x09); // Tag Type: Video
                 flv_tag.put_u24(msg.payload.len() as u32); // Data Size
                 
-                // 时间戳处理 - 低24位
-                let timestamp_low = msg.timestamp & 0xFFFFFF;
-                flv_tag.put_u24(timestamp_low);
+                // 时间戳处理 - FLV格式为大端序低24位
+                flv_tag.put_u24(msg.timestamp & 0xFFFFFF);
                 
                 // 时间戳扩展 - 高8位
-                let timestamp_ext = ((msg.timestamp >> 24) & 0xFF) as u8;
-                flv_tag.put_u8(timestamp_ext);
+                flv_tag.put_u8(((msg.timestamp >> 24) & 0xFF) as u8);
                 
                 flv_tag.put_u24(0); // StreamID
                 
@@ -276,13 +285,11 @@ impl FlvStreamManager {
                 flv_tag.put_u8(0x08); // Tag Type: Audio
                 flv_tag.put_u24(msg.payload.len() as u32); // Data Size
                 
-                // 时间戳处理 - 低24位
-                let timestamp_low = msg.timestamp & 0xFFFFFF;
-                flv_tag.put_u24(timestamp_low);
+                // 时间戳处理 - FLV格式为大端序低24位
+                flv_tag.put_u24(msg.timestamp & 0xFFFFFF);
                 
                 // 时间戳扩展 - 高8位
-                let timestamp_ext = ((msg.timestamp >> 24) & 0xFF) as u8;
-                flv_tag.put_u8(timestamp_ext);
+                flv_tag.put_u8(((msg.timestamp >> 24) & 0xFF) as u8);
                 
                 flv_tag.put_u24(0); // StreamID
                 
@@ -301,8 +308,8 @@ impl FlvStreamManager {
                 // FLV Tag Header
                 flv_tag.put_u8(0x12); // Tag Type: Script
                 flv_tag.put_u24(msg.payload.len() as u32); // Data Size
-                flv_tag.put_u24(msg.timestamp); // Timestamp
-                flv_tag.put_u8((msg.timestamp >> 24) as u8); // Timestamp Extended
+                flv_tag.put_u24(msg.timestamp & 0xFFFFFF); // Timestamp
+                flv_tag.put_u8(((msg.timestamp >> 24) & 0xFF) as u8); // Timestamp Extended
                 flv_tag.put_u24(0); // StreamID
                 
                 // FLV Script Tag Body
