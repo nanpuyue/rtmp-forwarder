@@ -566,11 +566,20 @@
                         const currentTime = video.currentTime;
                         const latency = bufferEnd - currentTime;
                         
-                        if (latency > targetLatency + 0.5) {
+                        // 混合策略：延迟大时跳帧，延迟小时变速
+                        if (latency > 2.0) {
+                            // 延迟过大，直接跳到最新位置
+                            video.currentTime = bufferEnd - 0.3;
+                            video.playbackRate = 1.0;
+                            console.log(`Jump: latency ${latency.toFixed(2)}s`);
+                        } else if (latency > targetLatency + 0.5) {
+                            // 中等延迟，加速播放
                             video.playbackRate = 1.2;
                         } else if (latency < targetLatency - 0.2) {
+                            // 延迟过小，减速播放
                             video.playbackRate = 0.95;
                         } else {
+                            // 延迟正常，正常播放
                             video.playbackRate = 1.0;
                         }
                     }
