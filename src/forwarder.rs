@@ -120,7 +120,12 @@ impl TargetActor {
                         }
                     }
                 }
-                ForwardEvent::Shutdown => break,
+                ForwardEvent::Shutdown => {
+                    if let Some(ref mut w) = conn {
+                        self.graceful_shutdown(w).await;
+                    }
+                    break;
+                }
             }
         }
         info!("Target Worker [{}] stopped", self.config.addr);
@@ -201,5 +206,22 @@ impl TargetActor {
             write_rtmp_message(w, &a, 128).await.ok();
         }
         Ok(())
+    }
+    
+    async fn graceful_shutdown(&self, w: &mut tokio::net::tcp::OwnedWriteHalf) {
+        if let (Some(app), Some(stream)) = (
+            self.config.app.as_deref().or(self.snapshot.client_app.as_deref()),
+            self.config.stream.as_deref().or(self.snapshot.client_stream.as_deref())
+        ) {
+            info!("Target [{}] graceful shutdown: stream={}", self.config.addr, stream);
+            
+            crate::rtmp::send_rtmp_command(w, 3, 1, 128, "FCUnpublish", 6.0, &[], &[
+                crate::amf::Amf0::String(stream.into())
+            ]).await.ok();
+            
+            crate::rtmp::send_rtmp_command(w, 3, 1, 128, "deleteStream", 7.0, &[], &[
+                crate::amf::Amf0::Number(1.0)
+            ]).await.ok();
+        }
     }
 }
