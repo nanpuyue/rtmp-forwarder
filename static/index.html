@@ -20,18 +20,24 @@
             background: radial-gradient(circle at top left, #1e1b4b, #0f172a);
             color: var(--text);
             margin: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
             min-height: 100vh;
             overflow-x: hidden;
         }
 
         .container {
-            width: 100%;
-            max-width: 800px;
+            display: flex;
+            gap: 1rem;
             padding: 2rem;
+            min-height: 100vh;
             animation: fadeIn 0.8s ease-out;
+        }
+
+        .left-panel {
+            flex: 0 0 70%;
+        }
+
+        .right-panel {
+            flex: 0 0 calc(30% - 1rem);
         }
 
         @keyframes fadeIn {
@@ -55,15 +61,17 @@
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
         }
 
-        h1 {
+        .logo {
+            position: absolute;
+            bottom: 1rem;
+            left: 1rem;
             font-weight: 600;
-            font-size: 2.5rem;
-            margin-bottom: 2rem;
+            font-size: 1rem;
             background: linear-gradient(to right, #818cf8, #c084fc);
             -webkit-background-clip: text;
             background-clip: text;
             -webkit-text-fill-color: transparent;
-            text-align: center;
+            opacity: 0.6;
         }
 
         .section {
@@ -118,18 +126,47 @@
 
         .upstream-item {
             display: flex;
-            gap: 0.75rem;
-            margin-bottom: 1rem;
+            gap: 0.5rem;
+            margin-bottom: 0.75rem;
             animation: slideIn 0.3s ease-out;
             align-items: center;
         }
 
-        .upstream-item input.addr-input {
-            flex: 2;
+        .upstream-host {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            padding: 0.6rem 1rem;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            color: #cbd5e1;
         }
 
-        .upstream-item input.stream-input {
-            flex: 1;
+        .btn-edit {
+            background: rgba(168, 85, 247, 0.1);
+            color: #a855f7;
+            padding: 0;
+            width: 40px;
+            height: 40px;
+            border-radius: 12px;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            cursor: pointer;
+            border: none;
+        }
+
+        .btn-edit svg {
+            display: block;
+        }
+
+        .btn-edit:hover {
+            background: rgba(168, 85, 247, 0.2);
         }
 
         @keyframes slideIn {
@@ -176,19 +213,30 @@
         }
 
         .btn-remove {
-            background: rgba(239, 68, 68, 0.1);
-            color: #ef4444;
-            padding: 0;
-            width: 40px;
-            height: 40px;
-            line-height: 40px;
+            background: #ef4444;
+            color: white;
+            padding: 0.8rem 1.5rem;
             border-radius: 12px;
             flex-shrink: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem;
+            font-size: 0.95rem;
             margin: 0;
+        }
+
+        .btn-remove:hover {
+            background: #dc2626;
+        }
+
+        .btn-save {
+            background: #3b82f6;
+            color: white;
+            padding: 0.8rem 1.5rem;
+            border-radius: 12px;
+            flex-shrink: 0;
+            font-size: 0.95rem;
+        }
+
+        .btn-save:hover {
+            background: #2563eb;
         }
 
         /* iOS Switch */
@@ -270,6 +318,9 @@
 
         .video-container {
             position: relative;
+            background: #000;
+            border-radius: 12px;
+            padding: 1rem;
         }
 
         .play-overlay {
@@ -329,18 +380,85 @@
             opacity: 1;
             pointer-events: auto;
         }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-content {
+            position: relative;
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 24px;
+            margin: 10% auto;
+            padding: 2rem;
+            width: 90%;
+            max-width: 500px;
+            animation: modalIn 0.3s ease-out;
+        }
+
+        @keyframes modalIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .modal-close {
+            position: absolute;
+            right: 1.5rem;
+            top: 1.5rem;
+            font-size: 1.5rem;
+            color: #94a3b8;
+            cursor: pointer;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+
+        .modal-close:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+
+        .modal-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+            color: #f1f5f9;
+        }
+
+        .modal-buttons {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
     </style>
     <script src="flv.min.js"></script>
 </head>
 
 <body>
     <div class="container">
-        <div class="card">
-            <h1>RTMP Forwarder</h1>
-
-            <div class="section">
-                <span class="section-title">Video Preview</span>
-                <div class="video-container" style="background: #000; border-radius: 12px; padding: 1rem; margin-bottom: 1rem; position: relative;">
+        <div class="left-panel">
+            <div class="card">
+                <div class="video-container">
                     <video id="video" controls autoplay muted style="width: 100%; aspect-ratio: 16/9; background: black; border-radius: 8px;"></video>
                     <div class="play-overlay" id="playOverlay" onclick="togglePlayPause()">
                         <div class="play-button" id="playButton">
@@ -349,44 +467,51 @@
                             </svg>
                         </div>
                     </div>
+                    <div class="logo">RTMP Forwarder</div>
                 </div>
             </div>
+        </div>
 
-            <div class="section">
-                <span class="section-title">Core Settings</span>
-                <div class="form-group">
-                    <label>RTMP Listen Address</label>
-                    <input type="text" id="listen_addr" placeholder="0.0.0.0:1935">
+        <div class="right-panel">
+            <div class="card">
+                <div class="section">
+                    <span class="section-title">推流配置</span>
+                    <div id="upstreams-container"></div>
+                    <button class="btn btn-add" onclick="addUpstream()">+ 添加推流目标</button>
                 </div>
-                <div class="form-group">
-                    <label>Log Level</label>
-                    <select id="log_level">
-                        <option value="trace">Trace</option>
-                        <option value="debug">Debug</option>
-                        <option value="info">Info</option>
-                        <option value="error">Error</option>
-                    </select>
+
+                <div class="section">
+                    <span class="section-title">Original Relay</span>
+                    <div class="upstream-item" style="align-items: center;">
+                        <input type="text" id="relay_addr" placeholder="无">
+                        <label class="switch">
+                            <input type="checkbox" id="relay_enabled" onchange="save()">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
                 </div>
-            </div>
 
-            <div class="section">
-                <span class="section-title">Upstreams (Direct Rewrite)</span>
-                <div id="upstreams-container"></div>
-                <button class="btn btn-add" onclick="addUpstream()">+ Add Upstream</button>
+                <button class="btn btn-primary" onclick="save()">保存配置</button>
             </div>
+        </div>
+    </div>
 
-            <div class="section">
-                <span class="section-title">Original Relay</span>
-                <div class="upstream-item" style="align-items: center;">
-                    <input type="text" id="relay_addr" placeholder="10.0.1.5:1935">
-                    <label class="switch">
-                        <input type="checkbox" id="relay_enabled" onchange="save()">
-                        <span class="slider"></span>
-                    </label>
-                </div>
+    <div id="editModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeModal()">&times;</span>
+            <div class="modal-title">编辑推流目标</div>
+            <div class="form-group">
+                <label>主机 + App</label>
+                <input type="text" id="modal_addr" placeholder="rtmp://host:port/app">
             </div>
-
-            <button class="btn btn-primary" onclick="save()">Save All Settings</button>
+            <div class="form-group">
+                <label>Stream</label>
+                <input type="text" id="modal_stream" placeholder="stream">
+            </div>
+            <div class="modal-buttons">
+                <button class="btn btn-save" onclick="saveUpstream()">保存</button>
+                <button class="btn btn-remove" onclick="deleteUpstream()">删除</button>
+            </div>
         </div>
     </div>
 
@@ -485,13 +610,12 @@
         }
 
         let config = {};
+        let editingIndex = -1;
 
         async function load() {
             const res = await fetch('/api/config');
             config = await res.json();
 
-            document.getElementById('listen_addr').value = config.listen_addr;
-            document.getElementById('log_level').value = config.log_level;
             document.getElementById('relay_addr').value = config.relay_addr || "";
             document.getElementById('relay_enabled').checked = config.relay_enabled;
 
@@ -509,33 +633,48 @@
             const div = document.createElement('div');
             div.className = 'upstream-item';
 
-            // Reconstruct the base URL (addr + app)
-            let base = u.addr;
-            if (base && !base.startsWith("rtmp://")) base = "rtmp://" + base;
-            if (u.app) base += "/" + u.app;
+            let host = u.addr || '';
+            if (host && !host.startsWith("rtmp://")) host = "rtmp://" + host;
 
             div.innerHTML = `
-                <button class="btn btn-remove" onclick="removeUpstream(${index})">×</button>
-                <input type="text" class="addr-input" placeholder="rtmp://host:port/app" value="${base || ''}" id="up_addr_${index}">
-                <input type="text" class="stream-input" placeholder="stream" value="${u.stream || ''}" id="up_stream_${index}">
+                <div class="upstream-host" title="${host}">${host}</div>
                 <label class="switch">
-                    <input type="checkbox" id="up_enabled_${index}" ${u.enabled ? 'checked' : ''} onchange="save()">
+                    <input type="checkbox" id="up_enabled_${index}" ${u.enabled ? 'checked' : ''} onchange="toggleUpstream(${index})">
                     <span class="slider"></span>
                 </label>
+                <button class="btn btn-edit" onclick="editUpstream(${index})" title="编辑">⚙</button>
             `;
             container.appendChild(div);
         }
 
         function addUpstream() {
             config.upstreams.push({ addr: "", app: null, stream: null, enabled: false });
+            const newIndex = config.upstreams.length - 1;
             refreshUpstreams();
-            // Do NOT save yet
+            editUpstream(newIndex);
         }
 
-        function removeUpstream(i) {
-            config.upstreams.splice(i, 1);
-            refreshUpstreams();
-            save(); // Delete still saves immediately
+        function toggleUpstream(index) {
+            config.upstreams[index].enabled = document.getElementById(`up_enabled_${index}`).checked;
+            save();
+        }
+
+        function editUpstream(index) {
+            editingIndex = index;
+            const u = config.upstreams[index];
+            
+            let base = u.addr || '';
+            if (base && !base.startsWith("rtmp://")) base = "rtmp://" + base;
+            if (u.app) base += "/" + u.app;
+            
+            document.getElementById('modal_addr').value = base;
+            document.getElementById('modal_stream').value = u.stream || '';
+            document.getElementById('editModal').style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('editModal').style.display = 'none';
+            editingIndex = -1;
         }
 
         function parseAddr(val) {
@@ -549,30 +688,50 @@
             };
         }
 
-        async function save() {
-            const upstreams = [];
-            // Query all rows
-            const rows = document.getElementById('upstreams-container').children;
-            for (let i = 0; i < rows.length; i++) {
-                const addrVal = document.getElementById(`up_addr_${i}`).value;
-                const streamVal = document.getElementById(`up_stream_${i}`).value;
-                const enabled = document.getElementById(`up_enabled_${i}`).checked;
-
-                const { addr, app } = parseAddr(addrVal);
-                upstreams.push({
-                    addr,
-                    app,
-                    stream: streamVal || null,
-                    enabled
-                });
+        function saveUpstream() {
+            if (editingIndex === -1) return;
+            
+            const addrVal = document.getElementById('modal_addr').value;
+            const streamVal = document.getElementById('modal_stream').value;
+            
+            let addr, app, stream;
+            
+            if (!streamVal) {
+                const parsed = parseAddr(addrVal);
+                addr = parsed.addr;
+                app = parsed.app;
+                stream = null;
+            } else {
+                const parsed = parseAddr(addrVal);
+                addr = parsed.addr;
+                app = parsed.app;
+                stream = streamVal;
             }
+            
+            config.upstreams[editingIndex].addr = addr;
+            config.upstreams[editingIndex].app = app;
+            config.upstreams[editingIndex].stream = stream;
+            
+            closeModal();
+            refreshUpstreams();
+            save();
+        }
 
+        function deleteUpstream() {
+            if (editingIndex === -1) return;
+            config.upstreams.splice(editingIndex, 1);
+            closeModal();
+            refreshUpstreams();
+            save();
+        }
+
+        async function save() {
             const updated = {
-                listen_addr: document.getElementById('listen_addr').value,
-                log_level: document.getElementById('log_level').value,
+                listen_addr: config.listen_addr,
+                log_level: config.log_level,
                 relay_addr: document.getElementById('relay_addr').value || null,
                 relay_enabled: document.getElementById('relay_enabled').checked,
-                upstreams: upstreams,
+                upstreams: config.upstreams,
                 web_addr: config.web_addr
             };
 
@@ -583,7 +742,7 @@
             });
 
             if (res.ok) {
-                config = updated; // Update local state
+                config = updated;
                 const toast = document.getElementById('toast');
                 toast.style.display = 'block';
                 setTimeout(() => toast.style.display = 'none', 2000);
