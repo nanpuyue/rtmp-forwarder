@@ -3,7 +3,7 @@ use bytes::{BufMut, BytesMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RtmpMessage {
     pub csid: u8,
     pub timestamp: u32,

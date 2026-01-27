@@ -8,9 +8,12 @@ mod server;
 mod web;
 mod forwarder;
 mod stream_manager;
+mod forwarder_manager;
+mod flv_manager;
 
-use crate::web::FlvStreamManager;
 use crate::stream_manager::StreamManager;
+use crate::forwarder_manager::ForwarderManager;
+use crate::flv_manager::FlvManager;
 
 use anyhow::Result;
 use clap::Parser;
@@ -102,19 +105,25 @@ async fn main() -> Result<()> {
 
     let shared_config = Arc::new(RwLock::new(app_config));
 
-    // 3. Create shared FLV stream manager
-    let flv_manager = Arc::new(FlvStreamManager::new());
-    
-    // 4. Create stream manager
-    let (stream_manager, mut event_rx) = StreamManager::new();
+    // 3. Create stream manager
+    let (stream_manager, _event_rx) = StreamManager::new();
     let stream_manager = Arc::new(stream_manager);
     
-    // 5. Spawn event listener
-    tokio::spawn(async move {
-        while let Some(event) = event_rx.recv().await {
-            info!("Stream event: {:?}", event);
-        }
-    });
+    // 4. Create forwarder manager
+    let initial_upstreams = {
+        let cfg = shared_config.read().unwrap();
+        cfg.upstreams.clone()
+    };
+    let (forwarder_mgr, _forwarder_cmd_tx) = ForwarderManager::new(
+        stream_manager.clone(),
+        initial_upstreams,
+    );
+    tokio::spawn(forwarder_mgr.run());
+    
+    // 5. Create FLV manager
+    let flv_manager = Arc::new(FlvManager::new(stream_manager.clone()));
+    let flv_mgr_clone = flv_manager.clone();
+    tokio::spawn(async move { flv_mgr_clone.run().await });
 
     // 6. Start Web Server
     let web_conf = shared_config.clone();
@@ -131,12 +140,11 @@ async fn main() -> Result<()> {
     loop {
         let (client, peer) = listener.accept().await?;
         let conf = shared_config.clone();
-        let server_flv_manager = flv_manager.clone();
         let server_stream_manager = stream_manager.clone();
 
         tokio::spawn(async move {
             info!("Received connection from client: {}", peer);
-            if let Err(e) = server::handle_client(client, conf, server_flv_manager, server_stream_manager).await {
+            if let Err(e) = server::handle_client(client, conf, server_stream_manager).await {
                 error!(error = %e, "connection error");
             }
         });
