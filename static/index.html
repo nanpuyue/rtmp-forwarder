@@ -10,7 +10,7 @@
         .header h1 { margin: 0; font-size: 24px; }
         .header p { margin: 5px 0 0 0; color: #ccc; }
         
-        .main-content { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .main-content { display: grid; grid-template-columns: 70% 30%; gap: 20px; }
         
         .panel { background: #2d2d2d; padding: 20px; border-radius: 8px; }
         .panel h2 { margin-top: 0; font-size: 18px; border-bottom: 1px solid #444; padding-bottom: 10px; }
@@ -48,6 +48,25 @@
         .log-line.error { color: #ff6b6b; }
         .log-line.success { color: #51cf66; }
         
+        .upstream-item { background: #3a3a3a; border: 1px solid #555; border-radius: 4px; padding: 10px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
+        .upstream-info { flex: 1; }
+        .upstream-name { font-weight: bold; color: #fff; margin-bottom: 5px; }
+        .upstream-url { font-size: 12px; color: #ccc; }
+        .upstream-actions { display: flex; gap: 5px; }
+        .upstream-actions button { padding: 5px 10px; font-size: 12px; border-radius: 3px; border: none; cursor: pointer; }
+        .btn-toggle { background: #6c757d; color: white; }
+        .btn-toggle.enabled { background: #28a745; }
+        .btn-edit { background: #007bff; color: white; }
+        .btn-delete { background: #dc3545; color: white; }
+        
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 1000; }
+        .modal-content { background: #2d2d2d; border-radius: 8px; padding: 20px; width: 400px; max-width: 90%; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .modal-title { font-size: 18px; font-weight: bold; }
+        .modal-close { background: none; border: none; font-size: 20px; color: #ccc; cursor: pointer; }
+        .modal-form { display: grid; gap: 10px; }
+        .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 15px; }
+        
         @media (max-width: 768px) {
             .main-content { grid-template-columns: 1fr; }
         }
@@ -62,60 +81,7 @@
         </div>
         
         <div class="main-content">
-            <!-- 配置面板 -->
-            <div class="panel">
-                <h2>配置设置</h2>
-                
-                <div id="config-status" class="status">正在加载配置...</div>
-                
-                <div class="form-group">
-                    <label>监听地址</label>
-                    <input type="text" id="listen-addr" placeholder="127.0.0.1:1935">
-                </div>
-                
-                <div class="form-group">
-                    <label>上游地址</label>
-                    <input type="text" id="upstream-addr" placeholder="rtmp://upstream-server:1935/app/stream">
-                </div>
-                
-                <div class="form-group">
-                    <label>日志级别</label>
-                    <select id="log-level">
-                        <option value="info">Info</option>
-                        <option value="debug">Debug</option>
-                        <option value="warn">Warn</option>
-                        <option value="error">Error</option>
-                    </select>
-                </div>
-                
-                <div class="form-group">
-                    <label>Web 地址</label>
-                    <input type="text" id="web-addr" placeholder="0.0.0.0:8080">
-                </div>
-                
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="relay-enabled"> 启用中继模式
-                    </label>
-                </div>
-                
-                <div class="form-group">
-                    <label>中继地址</label>
-                    <input type="text" id="relay-addr" placeholder="rtmp://relay-server:1935/app/stream" disabled>
-                </div>
-                
-                <div class="controls" style="margin-top: 0;">
-                    <button class="btn" onclick="saveConfig()">保存配置</button>
-                    <button class="btn secondary" onclick="loadConfig()">刷新配置</button>
-                </div>
-                
-                <div style="margin-top: 20px;">
-                    <h3>操作日志</h3>
-                    <div id="log" class="log"></div>
-                </div>
-            </div>
-            
-            <!-- 预览面板 -->
+            <!-- 预览面板 - 左边 70% -->
             <div class="panel">
                 <h2>视频预览</h2>
                 
@@ -135,6 +101,77 @@
                     <h3>流信息</h3>
                     <div id="stream-info" class="status">流状态: 未连接</div>
                 </div>
+            </div>
+            
+            <!-- 配置面板 - 右边 30% -->
+            <div class="panel">
+                <h2>配置设置</h2>
+                
+                <div id="config-status" class="status">正在加载配置...</div>
+                
+                <div class="form-group">
+                    <label>上游列表</label>
+                    <div id="upstream-list" class="upstream-list">
+                        <!-- 上游列表将在这里动态生成 -->
+                    </div>
+                    <button class="btn secondary" onclick="addUpstream()" style="margin-top: 10px; width: 100%;">添加上游</button>
+                </div>
+                
+                <div class="form-group">
+                    <label>日志级别</label>
+                    <select id="log-level">
+                        <option value="info">Info</option>
+                        <option value="debug">Debug</option>
+                        <option value="warn">Warn</option>
+                        <option value="error">Error</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="relay-enabled"> 启用中继模式
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label>中继地址</label>
+                    <input type="text" id="relay-addr" placeholder="rtmp://relay-server:1935" disabled>
+                </div>
+                
+                <div class="controls" style="margin-top: 0;">
+                    <button class="btn" onclick="saveConfig()">保存配置</button>
+                    <button class="btn secondary" onclick="loadConfig()">刷新配置</button>
+                </div>
+                
+                <div style="margin-top: 20px;">
+                    <h3>操作日志</h3>
+                    <div id="log" class="log"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 编辑弹窗 -->
+    <div id="edit-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title" id="modal-title">编辑上游</div>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-form">
+                <div class="form-group">
+                    <label>上游地址</label>
+                    <input type="text" id="modal-addr" placeholder="rtmp://upstream-server:1935/app">
+                </div>
+                <div class="form-group">
+                    <label>流名称</label>
+                    <input type="text" id="modal-stream" placeholder="stream">
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn secondary" onclick="deleteUpstream()">删除</button>
+                <button class="btn secondary" onclick="closeModal()">取消</button>
+                <button class="btn" onclick="saveUpstream()">保存</button>
             </div>
         </div>
     </div>
@@ -159,12 +196,16 @@
                 const response = await fetch('/api/config');
                 const config = await response.json();
                 
-                document.getElementById('listen-addr').value = config.listen_addr;
-                document.getElementById('upstream-addr').value = config.upstreams[0]?.addr || '';
                 document.getElementById('log-level').value = config.log_level;
-                document.getElementById('web-addr').value = config.web_addr;
                 document.getElementById('relay-enabled').checked = config.relay_enabled;
-                document.getElementById('relay-addr').value = config.relay_addr || '';
+                
+                // 处理中继配置 - 只保留地址
+                if (config.relay_addr) {
+                    const parts = config.relay_addr.split('/');
+                    document.getElementById('relay-addr').value = parts.slice(0, 3).join('/');
+                } else {
+                    document.getElementById('relay-addr').value = '';
+                }
                 document.getElementById('relay-addr').disabled = !config.relay_enabled;
                 
                 document.getElementById('config-status').className = 'status success';
@@ -179,17 +220,10 @@
         
         async function saveConfig() {
             const config = {
-                listen_addr: document.getElementById('listen-addr').value,
-                upstreams: [{
-                    addr: document.getElementById('upstream-addr').value,
-                    app: null,
-                    stream: null,
-                    enabled: true
-                }],
                 log_level: document.getElementById('log-level').value,
-                web_addr: document.getElementById('web-addr').value,
                 relay_enabled: document.getElementById('relay-enabled').checked,
-                relay_addr: document.getElementById('relay-addr').value
+                relay_addr: document.getElementById('relay-enabled').checked ? 
+                    document.getElementById('relay-addr').value : ''
             };
             
             try {
@@ -313,6 +347,8 @@
         // 中继开关事件
         document.getElementById('relay-enabled').addEventListener('change', function() {
             document.getElementById('relay-addr').disabled = !this.checked;
+            document.getElementById('relay-app').disabled = !this.checked;
+            document.getElementById('relay-stream').disabled = !this.checked;
         });
         
         // 页面加载时初始化
@@ -327,6 +363,199 @@
         window.onbeforeunload = function() {
             stopStream();
         };
+
+        // 上游管理功能
+        let currentEditIndex = -1;
+        let currentConfig = null;
+
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                currentConfig = await response.json();
+                
+                document.getElementById('log-level').value = currentConfig.log_level;
+                document.getElementById('relay-enabled').checked = currentConfig.relay_enabled;
+                
+                // 处理中继配置 - 只保留地址
+                if (currentConfig.relay_addr) {
+                    const parts = currentConfig.relay_addr.split('/');
+                    document.getElementById('relay-addr').value = parts.slice(0, 3).join('/');
+                } else {
+                    document.getElementById('relay-addr').value = '';
+                }
+                document.getElementById('relay-addr').disabled = !currentConfig.relay_enabled;
+                
+                // 渲染上游列表
+                renderUpstreamList();
+                
+                document.getElementById('config-status').className = 'status success';
+                document.getElementById('config-status').textContent = '配置加载成功';
+                addLog('配置加载成功', 'success');
+            } catch (error) {
+                document.getElementById('config-status').className = 'status error';
+                document.getElementById('config-status').textContent = '配置加载失败: ' + error.message;
+                addLog('配置加载失败: ' + error.message, 'error');
+            }
+        }
+
+        function renderUpstreamList() {
+            const list = document.getElementById('upstream-list');
+            list.innerHTML = '';
+            
+            if (!currentConfig || !currentConfig.upstreams || currentConfig.upstreams.length === 0) {
+                list.innerHTML = '<div class="status warning">暂无上游配置</div>';
+                return;
+            }
+
+            currentConfig.upstreams.forEach((upstream, index) => {
+                const item = document.createElement('div');
+                item.className = 'upstream-item';
+                
+                const info = document.createElement('div');
+                info.className = 'upstream-info';
+                
+                const name = document.createElement('div');
+                name.className = 'upstream-name';
+                name.textContent = upstream.stream || '未命名';
+                
+                const url = document.createElement('div');
+                url.className = 'upstream-url';
+                url.textContent = upstream.addr || '未设置地址';
+                
+                info.appendChild(name);
+                info.appendChild(url);
+                
+                const actions = document.createElement('div');
+                actions.className = 'upstream-actions';
+                
+                const toggleBtn = document.createElement('button');
+                toggleBtn.className = `btn-toggle ${upstream.enabled ? 'enabled' : ''}`;
+                toggleBtn.textContent = upstream.enabled ? '启用' : '禁用';
+                toggleBtn.onclick = () => toggleUpstream(index);
+                
+                const editBtn = document.createElement('button');
+                editBtn.className = 'btn-edit';
+                editBtn.textContent = '编辑';
+                editBtn.onclick = () => editUpstream(index);
+                
+                actions.appendChild(toggleBtn);
+                actions.appendChild(editBtn);
+                
+                item.appendChild(info);
+                item.appendChild(actions);
+                list.appendChild(item);
+            });
+        }
+
+        function addUpstream() {
+            currentEditIndex = -1;
+            document.getElementById('modal-title').textContent = '添加上游';
+            document.getElementById('modal-addr').value = '';
+            document.getElementById('modal-stream').value = '';
+            document.getElementById('edit-modal').style.display = 'flex';
+        }
+
+        function editUpstream(index) {
+            currentEditIndex = index;
+            const upstream = currentConfig.upstreams[index];
+            document.getElementById('modal-title').textContent = '编辑上游';
+            document.getElementById('modal-addr').value = upstream.addr || '';
+            document.getElementById('modal-stream').value = upstream.stream || '';
+            document.getElementById('edit-modal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('edit-modal').style.display = 'none';
+        }
+
+        function saveUpstream() {
+            const addr = document.getElementById('modal-addr').value.trim();
+            const stream = document.getElementById('modal-stream').value.trim();
+            
+            if (!addr) {
+                alert('请输入上游地址');
+                return;
+            }
+
+            if (currentEditIndex === -1) {
+                // 添加新的上游
+                if (!currentConfig.upstreams) {
+                    currentConfig.upstreams = [];
+                }
+                currentConfig.upstreams.push({
+                    addr: addr,
+                    stream: stream,
+                    enabled: true
+                });
+            } else {
+                // 编辑现有上游
+                currentConfig.upstreams[currentEditIndex] = {
+                    addr: addr,
+                    stream: stream,
+                    enabled: currentConfig.upstreams[currentEditIndex].enabled
+                };
+            }
+
+            renderUpstreamList();
+            closeModal();
+            addLog(currentEditIndex === -1 ? '添加上游成功' : '编辑上游成功', 'success');
+        }
+
+        function deleteUpstream() {
+            if (currentEditIndex === -1) {
+                alert('请选择要删除的上游');
+                return;
+            }
+
+            if (!confirm('确定要删除这个上游配置吗？')) {
+                return;
+            }
+
+            currentConfig.upstreams.splice(currentEditIndex, 1);
+            renderUpstreamList();
+            closeModal();
+            addLog('删除上游成功', 'success');
+        }
+
+        function toggleUpstream(index) {
+            currentConfig.upstreams[index].enabled = !currentConfig.upstreams[index].enabled;
+            renderUpstreamList();
+            addLog(`上游 ${currentConfig.upstreams[index].stream || '未命名'} ${currentConfig.upstreams[index].enabled ? '已启用' : '已禁用'}`, 'info');
+        }
+
+        async function saveConfig() {
+            try {
+                const config = {
+                    log_level: document.getElementById('log-level').value,
+                    relay_enabled: document.getElementById('relay-enabled').checked,
+                    relay_addr: document.getElementById('relay-enabled').checked ? 
+                        document.getElementById('relay-addr').value : ''
+                };
+                
+                const response = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                
+                const success = await response.json();
+                
+                if (success) {
+                    currentConfig = config;
+                    document.getElementById('config-status').className = 'status success';
+                    document.getElementById('config-status').textContent = '配置保存成功';
+                    addLog('配置保存成功', 'success');
+                } else {
+                    document.getElementById('config-status').className = 'status error';
+                    document.getElementById('config-status').textContent = '配置保存失败';
+                    addLog('配置保存失败', 'error');
+                }
+            } catch (error) {
+                document.getElementById('config-status').className = 'status error';
+                document.getElementById('config-status').textContent = '配置保存失败: ' + error.message;
+                addLog('配置保存失败: ' + error.message, 'error');
+            }
+        }
     </script>
 </body>
 </html>
