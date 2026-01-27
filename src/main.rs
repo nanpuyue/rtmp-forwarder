@@ -10,6 +10,7 @@ mod forwarder;
 mod stream_manager;
 
 use crate::web::FlvStreamManager;
+use crate::stream_manager::StreamManager;
 
 use anyhow::Result;
 use clap::Parser;
@@ -102,16 +103,27 @@ async fn main() -> Result<()> {
     let shared_config = Arc::new(RwLock::new(app_config));
 
     // 3. Create shared FLV stream manager
-    let flv_manager = std::sync::Arc::new(FlvStreamManager::new());
+    let flv_manager = Arc::new(FlvStreamManager::new());
+    
+    // 4. Create stream manager
+    let (stream_manager, mut event_rx) = StreamManager::new();
+    let stream_manager = Arc::new(stream_manager);
+    
+    // 5. Spawn event listener
+    tokio::spawn(async move {
+        while let Some(event) = event_rx.recv().await {
+            info!("Stream event: {:?}", event);
+        }
+    });
 
-    // 4. Start Web Server
+    // 6. Start Web Server
     let web_conf = shared_config.clone();
     let web_flv_manager = flv_manager.clone();
     tokio::spawn(async move {
         web::start_web_server(web_conf, web_flv_manager).await;
     });
 
-    // 5. Bind the listening socket based on current config
+    // 7. Bind the listening socket based on current config
     let listen_addr = shared_config.read().unwrap().listen_addr.clone();
     let listener = TcpListener::bind(&listen_addr).await?;
     info!("RTMP listening on: {}", listen_addr);
@@ -120,10 +132,11 @@ async fn main() -> Result<()> {
         let (client, peer) = listener.accept().await?;
         let conf = shared_config.clone();
         let server_flv_manager = flv_manager.clone();
+        let server_stream_manager = stream_manager.clone();
 
         tokio::spawn(async move {
             info!("Received connection from client: {}", peer);
-            if let Err(e) = server::handle_client(client, conf, server_flv_manager).await {
+            if let Err(e) = server::handle_client(client, conf, server_flv_manager, server_stream_manager).await {
                 error!(error = %e, "connection error");
             }
         });
