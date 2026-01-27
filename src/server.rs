@@ -154,17 +154,36 @@ pub async fn handle_client(
                                 }
                             }
                         }
-                        "FCUnpublish" | "deleteStream" | "closeStream" => {
-                            let result = match cmd.as_str() {
-                                "FCUnpublish" => stream_manager.handle_unpublish(1, client_id).await,
-                                "deleteStream" => stream_manager.handle_delete_stream(1, client_id).await,
-                                "closeStream" => stream_manager.handle_close_stream(1, client_id).await,
-                                _ => Ok(()),
-                            };
-                            
-                            if let Err(StreamError::NotPublishingClient) = result {
-                                warn!("{} rejected: not publishing client", cmd);
-                            }
+                        "FCUnpublish" => {
+                            stream_manager.handle_unpublish(1, client_id).await.ok();
+                            crate::rtmp::send_rtmp_command(&mut client, 3, 1, u2c_chunk, "onStatus", 0.0, &[], &[
+                                crate::amf::Amf0::Object(vec![
+                                    ("level".into(), crate::amf::Amf0::String("status".into())),
+                                    ("code".into(), crate::amf::Amf0::String("NetStream.Unpublish.Success".into())),
+                                    ("description".into(), crate::amf::Amf0::String("Unpublished.".into()))
+                                ])
+                            ]).await.ok();
+                        }
+                        "closeStream" => {
+                            stream_manager.handle_close_stream(1, client_id).await.ok();
+                            crate::rtmp::send_rtmp_command(&mut client, 3, 1, u2c_chunk, "onStatus", 0.0, &[], &[
+                                crate::amf::Amf0::Object(vec![
+                                    ("level".into(), crate::amf::Amf0::String("status".into())),
+                                    ("code".into(), crate::amf::Amf0::String("NetStream.Unpublish.Success".into())),
+                                    ("description".into(), crate::amf::Amf0::String("Stream closed.".into()))
+                                ])
+                            ]).await.ok();
+                        }
+                        "deleteStream" => {
+                            stream_manager.handle_delete_stream(1, client_id).await.ok();
+                            crate::rtmp::send_rtmp_command(&mut client, 3, 1, u2c_chunk, "onStatus", 0.0, &[], &[
+                                crate::amf::Amf0::Object(vec![
+                                    ("level".into(), crate::amf::Amf0::String("status".into())),
+                                    ("code".into(), crate::amf::Amf0::String("NetStream.DeleteStream.Success".into())),
+                                    ("description".into(), crate::amf::Amf0::String("Stream deleted.".into()))
+                                ])
+                            ]).await.ok();
+                            break;
                         }
                         _ => {}
                     }
