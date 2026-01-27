@@ -25,7 +25,7 @@ pub struct StreamInfo {
     pub stream_key: String,
     pub app_name: String,
     pub state: StreamState,
-    pub publishing_client: Option<String>,
+    pub publishing_client: Option<u32>,
     pub created_at: Instant,
     pub last_active: Instant,
     pub video_seq_hdr: Option<Bytes>,
@@ -63,7 +63,7 @@ impl StreamManager {
         Ok(())
     }
 
-    pub async fn handle_create_stream(&self, app_name: &str, _client_id: &str) -> Result<u32, StreamError> {
+    pub async fn handle_create_stream(&self, app_name: &str, _client_id: u32) -> Result<u32, StreamError> {
         let mut stream = self.default_stream.write().await;
         
         match stream.as_ref() {
@@ -93,7 +93,7 @@ impl StreamManager {
         }
     }
 
-    pub async fn handle_publish(&self, _stream_id: u32, _stream_key: &str, client_id: &str) -> Result<(), StreamError> {
+    pub async fn handle_publish(&self, _stream_id: u32, stream_key: &str, client_id: u32, app_name: &str) -> Result<(), StreamError> {
         let mut stream = self.default_stream.write().await;
         let s = stream.as_mut().ok_or(StreamError::StreamNotFound)?;
         
@@ -101,7 +101,9 @@ impl StreamManager {
             StreamState::Publishing => Err(StreamError::AlreadyPublishing),
             StreamState::Idle | StreamState::Closed => {
                 s.state = StreamState::Publishing;
-                s.publishing_client = Some(client_id.to_string());
+                s.publishing_client = Some(client_id);
+                s.stream_key = stream_key.to_string();
+                s.app_name = app_name.to_string();
                 s.last_active = Instant::now();
                 s.video_seq_hdr = None;
                 s.audio_seq_hdr = None;
@@ -113,12 +115,12 @@ impl StreamManager {
         }
     }
 
-    pub async fn handle_unpublish(&self, _stream_id: u32, client_id: &str) -> Result<(), StreamError> {
+    pub async fn handle_unpublish(&self, _stream_id: u32, client_id: u32) -> Result<(), StreamError> {
         let mut stream = self.default_stream.write().await;
         
         if let Some(s) = stream.as_mut() {
             if s.state == StreamState::Publishing {
-                if let Some(ref pub_client) = s.publishing_client {
+                if let Some(pub_client) = s.publishing_client {
                     if pub_client != client_id {
                         return Err(StreamError::NotPublishingClient);
                     }
@@ -134,12 +136,12 @@ impl StreamManager {
         Ok(())
     }
 
-    pub async fn handle_close_stream(&self, _stream_id: u32, client_id: &str) -> Result<(), StreamError> {
+    pub async fn handle_close_stream(&self, _stream_id: u32, client_id: u32) -> Result<(), StreamError> {
         let mut stream = self.default_stream.write().await;
         
         if let Some(s) = stream.as_mut() {
             if s.state == StreamState::Publishing {
-                if let Some(ref pub_client) = s.publishing_client {
+                if let Some(pub_client) = s.publishing_client {
                     if pub_client != client_id {
                         return Err(StreamError::NotPublishingClient);
                     }
@@ -158,14 +160,14 @@ impl StreamManager {
         Ok(())
     }
 
-    pub async fn handle_delete_stream(&self, _stream_id: u32, client_id: &str) -> Result<(), StreamError> {
+    pub async fn handle_delete_stream(&self, _stream_id: u32, client_id: u32) -> Result<(), StreamError> {
         let mut stream = self.default_stream.write().await;
         
         if let Some(s) = stream.as_mut() {
             match s.state {
                 StreamState::Publishing | StreamState::Idle => {
                     if s.state == StreamState::Publishing {
-                        if let Some(ref pub_client) = s.publishing_client {
+                        if let Some(pub_client) = s.publishing_client {
                             if pub_client != client_id {
                                 return Err(StreamError::NotPublishingClient);
                             }
@@ -189,11 +191,11 @@ impl StreamManager {
         Ok(())
     }
 
-    pub async fn handle_disconnect(&self, client_id: &str) {
+    pub async fn handle_disconnect(&self, client_id: u32) {
         let mut stream = self.default_stream.write().await;
         
         if let Some(s) = stream.as_ref() {
-            let is_publishing_client = s.publishing_client.as_ref()
+            let is_publishing_client = s.publishing_client
                 .map(|c| c == client_id)
                 .unwrap_or(false);
             

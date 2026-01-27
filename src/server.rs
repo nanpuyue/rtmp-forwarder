@@ -3,12 +3,17 @@ use crate::handshake::handshake_with_client;
 use crate::rtmp::{read_rtmp_message, write_rtmp_message, RtmpMessage};
 use crate::forwarder::{ForwardEvent, ProtocolSnapshot, TargetActor};
 use crate::web::FlvStreamManager;
+use crate::stream_manager::{StreamManager, StreamError};
 use anyhow::Result;
 use bytes::BytesMut;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tracing::info;
+use tracing::{info, warn};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+static CLIENT_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UpstreamConfig {
@@ -18,10 +23,16 @@ pub struct UpstreamConfig {
     pub enabled: bool,
 }
 
-pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::SharedConfig, flv_manager: std::sync::Arc<FlvStreamManager>) -> Result<()> {
+pub async fn handle_client(
+    mut client: TcpStream,
+    shared_config: crate::config::SharedConfig,
+    flv_manager: Arc<FlvStreamManager>,
+    stream_manager: Arc<StreamManager>,
+) -> Result<()> {
     client.set_nodelay(true)?;
     handshake_with_client(&mut client).await?;
 
+    let client_id = CLIENT_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut u2c_chunk = 128usize;
     let mut c2u_chunk = 128usize;
     let mut client_headers: Vec<Option<crate::rtmp::RtmpHeader>> = vec![None; 64];
@@ -83,6 +94,19 @@ pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::
 
                     match cmd.as_str() {
                         "connect" => {
+                            if let Err(StreamError::AlreadyPublishing) = stream_manager.handle_connect().await {
+                                warn!("Connection rejected: already publishing");
+                                crate::rtmp::send_rtmp_command(&mut client, 3, 0, u2c_chunk, "_error", tx_num,
+                                    &[],
+                                    &[crate::amf::Amf0::Object(vec![
+                                        ("level".into(), crate::amf::Amf0::String("error".into())),
+                                        ("code".into(), crate::amf::Amf0::String("NetConnection.Connect.Rejected".into())),
+                                        ("description".into(), crate::amf::Amf0::String("Already publishing".into()))
+                                    ])]
+                                ).await.ok();
+                                break;
+                            }
+                            
                             // Window Ack Size
                             write_rtmp_message(&mut client, &RtmpMessage { csid: 2, timestamp: 0, msg_type: 5, stream_id: 0, payload: BytesMut::from(&2500000u32.to_be_bytes()[..]) }, u2c_chunk).await.ok();
                             // Peer Bandwidth
@@ -102,16 +126,65 @@ pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::
                             ).await.ok();
                         }
                         "createStream" => {
-                            crate::rtmp::send_rtmp_command(&mut client, 3, 0, u2c_chunk, "_result", tx_num, &[], &[crate::amf::Amf0::Number(1.0)]).await.ok();
+                            match stream_manager.handle_create_stream(snapshot.client_app.as_deref().unwrap_or("live"), client_id).await {
+                                Ok(stream_id) => {
+                                    crate::rtmp::send_rtmp_command(&mut client, 3, 0, u2c_chunk, "_result", tx_num, &[], &[crate::amf::Amf0::Number(stream_id as f64)]).await.ok();
+                                }
+                                Err(StreamError::AlreadyPublishing) => {
+                                    warn!("createStream rejected: already publishing");
+                                    crate::rtmp::send_rtmp_command(&mut client, 3, 0, u2c_chunk, "_error", tx_num, &[], &[
+                                        crate::amf::Amf0::Object(vec![
+                                            ("level".into(), crate::amf::Amf0::String("error".into())),
+                                            ("code".into(), crate::amf::Amf0::String("NetStream.Create.Failed".into())),
+                                            ("description".into(), crate::amf::Amf0::String("Already publishing".into()))
+                                        ])
+                                    ]).await.ok();
+                                }
+                                _ => {}
+                            }
                         }
                         "publish" => {
-                            crate::rtmp::send_rtmp_command(&mut client, 3, 1, u2c_chunk, "onStatus", 0.0, &[], &[
-                                crate::amf::Amf0::Object(vec![
-                                    ("level".into(), crate::amf::Amf0::String("status".into())),
-                                    ("code".into(), crate::amf::Amf0::String("NetStream.Publish.Start".into())),
-                                    ("description".into(), crate::amf::Amf0::String("Publishing started.".into()))
-                                ])
-                            ]).await.ok();
+                            let stream_key = snapshot.client_stream.as_deref().unwrap_or("stream");
+                            let app_name = snapshot.client_app.as_deref().unwrap_or("live");
+                            
+                            match stream_manager.handle_publish(1, stream_key, client_id, app_name).await {
+                                Ok(_) => {
+                                    crate::rtmp::send_rtmp_command(&mut client, 3, 1, u2c_chunk, "onStatus", 0.0, &[], &[
+                                        crate::amf::Amf0::Object(vec![
+                                            ("level".into(), crate::amf::Amf0::String("status".into())),
+                                            ("code".into(), crate::amf::Amf0::String("NetStream.Publish.Start".into())),
+                                            ("description".into(), crate::amf::Amf0::String("Publishing started.".into()))
+                                        ])
+                                    ]).await.ok();
+                                }
+                                Err(e) => {
+                                    let msg = match e {
+                                        StreamError::AlreadyPublishing => "Already publishing",
+                                        StreamError::StreamNotFound => "Stream not found",
+                                        _ => "Publish failed",
+                                    };
+                                    warn!("publish rejected: {}", msg);
+                                    crate::rtmp::send_rtmp_command(&mut client, 3, 1, u2c_chunk, "onStatus", 0.0, &[], &[
+                                        crate::amf::Amf0::Object(vec![
+                                            ("level".into(), crate::amf::Amf0::String("error".into())),
+                                            ("code".into(), crate::amf::Amf0::String("NetStream.Publish.BadName".into())),
+                                            ("description".into(), crate::amf::Amf0::String(msg.into()))
+                                        ])
+                                    ]).await.ok();
+                                }
+                            }
+                        }
+                        "FCUnpublish" | "deleteStream" | "closeStream" => {
+                            let result = match cmd.as_str() {
+                                "FCUnpublish" => stream_manager.handle_unpublish(1, client_id).await,
+                                "deleteStream" => stream_manager.handle_delete_stream(1, client_id).await,
+                                "closeStream" => stream_manager.handle_close_stream(1, client_id).await,
+                                _ => Ok(()),
+                            };
+                            
+                            if let Err(StreamError::NotPublishingClient) = result {
+                                warn!("{} rejected: not publishing client", cmd);
+                            }
                         }
                         _ => {}
                     }
@@ -130,6 +203,8 @@ pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::
         flv_manager.handle_rtmp_message("stream", &msg).await;
     }
 
+    stream_manager.handle_disconnect(client_id).await;
+    
     for tx in active_workers.values() {
         let _ = tx.try_send(ForwardEvent::Shutdown);
     }
