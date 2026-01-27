@@ -501,16 +501,16 @@
             <span class="modal-close" onclick="closeModal()">&times;</span>
             <div class="modal-title">编辑推流目标</div>
             <div class="form-group">
-                <label>主机 + App</label>
+                <label>推流地址</label>
                 <input type="text" id="modal_addr" placeholder="rtmp://host:port/app">
             </div>
             <div class="form-group">
-                <label>Stream</label>
+                <label>推流码</label>
                 <input type="text" id="modal_stream" placeholder="stream">
             </div>
-            <div class="modal-buttons">
-                <button class="btn btn-save" onclick="saveUpstream()">保存</button>
+            <div class="modal-buttons" style="justify-content: flex-end;">
                 <button class="btn btn-remove" onclick="deleteUpstream()">删除</button>
+                <button class="btn btn-save" onclick="saveUpstream()">保存</button>
             </div>
         </div>
     </div>
@@ -611,6 +611,7 @@
 
         let config = {};
         let editingIndex = -1;
+        let originalUpstream = null;
 
         async function load() {
             const res = await fetch('/api/config');
@@ -648,10 +649,11 @@
         }
 
         function addUpstream() {
-            config.upstreams.push({ addr: "", app: null, stream: null, enabled: false });
-            const newIndex = config.upstreams.length - 1;
-            refreshUpstreams();
-            editUpstream(newIndex);
+            editingIndex = -1;
+            originalUpstream = null;
+            document.getElementById('modal_addr').value = '';
+            document.getElementById('modal_stream').value = '';
+            document.getElementById('editModal').style.display = 'block';
         }
 
         function toggleUpstream(index) {
@@ -661,6 +663,7 @@
 
         function editUpstream(index) {
             editingIndex = index;
+            originalUpstream = JSON.parse(JSON.stringify(config.upstreams[index]));
             const u = config.upstreams[index];
             
             let base = u.addr || '';
@@ -673,8 +676,12 @@
         }
 
         function closeModal() {
+            if (originalUpstream && editingIndex !== -1) {
+                config.upstreams[editingIndex] = originalUpstream;
+            }
             document.getElementById('editModal').style.display = 'none';
             editingIndex = -1;
+            originalUpstream = null;
         }
 
         function parseAddr(val) {
@@ -688,19 +695,41 @@
             };
         }
 
-        function saveUpstream() {
-            if (editingIndex === -1) return;
+        function parseFullRtmpUrl(url) {
+            if (!url) return { addr: "", app: null, stream: null };
             
+            let s = url.startsWith("rtmp://") ? url.slice(7) : url;
+            const firstSlash = s.indexOf('/');
+            
+            if (firstSlash === -1) {
+                return { addr: s, app: null, stream: null };
+            }
+            
+            const host = s.substring(0, firstSlash);
+            const path = s.substring(firstSlash + 1);
+            const secondSlash = path.indexOf('/');
+            
+            if (secondSlash === -1) {
+                return { addr: host, app: path || null, stream: null };
+            }
+            
+            const app = path.substring(0, secondSlash + 1);
+            const stream = path.substring(secondSlash + 1);
+            
+            return { addr: host, app: app || null, stream: stream || null };
+        }
+
+        function saveUpstream() {
             const addrVal = document.getElementById('modal_addr').value;
             const streamVal = document.getElementById('modal_stream').value;
             
             let addr, app, stream;
             
             if (!streamVal) {
-                const parsed = parseAddr(addrVal);
+                const parsed = parseFullRtmpUrl(addrVal);
                 addr = parsed.addr;
                 app = parsed.app;
-                stream = null;
+                stream = parsed.stream;
             } else {
                 const parsed = parseAddr(addrVal);
                 addr = parsed.addr;
@@ -708,19 +737,30 @@
                 stream = streamVal;
             }
             
-            config.upstreams[editingIndex].addr = addr;
-            config.upstreams[editingIndex].app = app;
-            config.upstreams[editingIndex].stream = stream;
+            if (editingIndex === -1) {
+                config.upstreams.push({ addr, app, stream, enabled: false });
+            } else {
+                config.upstreams[editingIndex].addr = addr;
+                config.upstreams[editingIndex].app = app;
+                config.upstreams[editingIndex].stream = stream;
+            }
             
-            closeModal();
+            originalUpstream = null;
+            document.getElementById('editModal').style.display = 'none';
+            editingIndex = -1;
             refreshUpstreams();
             save();
         }
 
         function deleteUpstream() {
-            if (editingIndex === -1) return;
+            if (editingIndex === -1) {
+                closeModal();
+                return;
+            }
             config.upstreams.splice(editingIndex, 1);
-            closeModal();
+            originalUpstream = null;
+            document.getElementById('editModal').style.display = 'none';
+            editingIndex = -1;
             refreshUpstreams();
             save();
         }
