@@ -1,7 +1,8 @@
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, mpsc, broadcast};
 use bytes::Bytes;
+use crate::rtmp::RtmpMessage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamState {
@@ -17,6 +18,20 @@ pub enum StreamEvent {
     StreamIdle,
     StreamClosed,
     StreamDeleted,
+}
+
+#[derive(Debug, Clone)]
+pub enum StreamMessage {
+    RtmpMessage(RtmpMessage),
+    StateChanged(StreamEvent),
+}
+
+#[derive(Clone)]
+pub struct StreamSnapshot {
+    pub app_name: String,
+    pub stream_key: String,
+    pub video_seq_hdr: Option<Bytes>,
+    pub audio_seq_hdr: Option<Bytes>,
 }
 
 #[derive(Debug)]
@@ -42,15 +57,56 @@ pub enum StreamError {
 pub struct StreamManager {
     default_stream: Arc<RwLock<Option<StreamInfo>>>,
     state_change_tx: mpsc::UnboundedSender<StreamEvent>,
+    message_tx: broadcast::Sender<StreamMessage>,
 }
 
 impl StreamManager {
     pub fn new() -> (Self, mpsc::UnboundedReceiver<StreamEvent>) {
         let (tx, rx) = mpsc::unbounded_channel();
+        let (msg_tx, _) = broadcast::channel(1024);
         (Self {
             default_stream: Arc::new(RwLock::new(None)),
             state_change_tx: tx,
+            message_tx: msg_tx,
         }, rx)
+    }
+    
+    pub fn subscribe(&self) -> broadcast::Receiver<StreamMessage> {
+        self.message_tx.subscribe()
+    }
+    
+    pub async fn handle_rtmp_message(&self, msg: RtmpMessage) {
+        let mut stream = self.default_stream.write().await;
+        
+        if let Some(s) = stream.as_mut() {
+            if s.state == StreamState::Publishing {
+                match msg.msg_type {
+                    9 if msg.payload.len() >= 2 && msg.payload[0] == 0x17 && msg.payload[1] == 0 => {
+                        s.video_seq_hdr = Some(msg.payload.clone().freeze());
+                    }
+                    8 if msg.payload.len() >= 2 && (msg.payload[0] >> 4) == 10 && msg.payload[1] == 0 => {
+                        s.audio_seq_hdr = Some(msg.payload.clone().freeze());
+                    }
+                    _ => {}
+                }
+                s.last_active = Instant::now();
+                drop(stream);
+                
+                self.message_tx.send(StreamMessage::RtmpMessage(msg)).ok();
+            }
+        }
+    }
+    
+    pub async fn get_stream_snapshot(&self) -> Option<StreamSnapshot> {
+        let stream = self.default_stream.read().await;
+        stream.as_ref()
+            .filter(|s| s.state == StreamState::Publishing)
+            .map(|s| StreamSnapshot {
+                app_name: s.app_name.clone(),
+                stream_key: s.stream_key.clone(),
+                video_seq_hdr: s.video_seq_hdr.clone(),
+                audio_seq_hdr: s.audio_seq_hdr.clone(),
+            })
     }
 
     pub async fn handle_connect(&self) -> Result<(), StreamError> {
@@ -110,6 +166,7 @@ impl StreamManager {
                 drop(stream);
                 
                 self.state_change_tx.send(StreamEvent::StreamPublishing).ok();
+                self.message_tx.send(StreamMessage::StateChanged(StreamEvent::StreamPublishing)).ok();
                 Ok(())
             }
         }
@@ -131,6 +188,7 @@ impl StreamManager {
                 drop(stream);
                 
                 self.state_change_tx.send(StreamEvent::StreamIdle).ok();
+                self.message_tx.send(StreamMessage::StateChanged(StreamEvent::StreamIdle)).ok();
             }
         }
         Ok(())
@@ -202,6 +260,7 @@ impl StreamManager {
             if is_publishing_client {
                 *stream = None;
                 self.state_change_tx.send(StreamEvent::StreamDeleted).ok();
+                self.message_tx.send(StreamMessage::StateChanged(StreamEvent::StreamDeleted)).ok();
             }
         }
     }
