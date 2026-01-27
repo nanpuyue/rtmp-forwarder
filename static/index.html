@@ -501,16 +501,16 @@
             <span class="modal-close" onclick="closeModal()">&times;</span>
             <div class="modal-title">编辑推流目标</div>
             <div class="form-group">
-                <label>主机 + App</label>
-                <input type="text" id="modal_addr" placeholder="rtmp://host:port/app">
+                <label>推流地址</label>
+                <input type="text" id="modal_addr" placeholder="rtmp://">
             </div>
             <div class="form-group">
-                <label>Stream</label>
-                <input type="text" id="modal_stream" placeholder="stream">
+                <label>推流码</label>
+                <input type="text" id="modal_stream" placeholder="">
             </div>
-            <div class="modal-buttons">
-                <button class="btn btn-save" onclick="saveUpstream()">保存</button>
+            <div class="modal-buttons" style="justify-content: flex-end;">
                 <button class="btn btn-remove" onclick="deleteUpstream()">删除</button>
+                <button class="btn btn-save" onclick="saveUpstream()">保存</button>
             </div>
         </div>
     </div>
@@ -544,18 +544,38 @@
                 }, {
                     enableWorker: false,
                     enableStashBuffer: false,
-                    stashInitialSize: 128,
                     autoCleanupSourceBuffer: true,
                     autoCleanupMaxBackwardDuration: 3,
                     autoCleanupMinBackwardDuration: 2,
-                    fixAudioTimestampGap: false,
-                    accurateSeek: false,
-                    lazyLoad: false,
                 });
                 
                 player.attachMediaElement(document.getElementById('video'));
                 player.load();
                 player.play();
+                
+                const video = document.getElementById('video');
+                let targetLatency = 0.5;
+                
+                if (latencyCheckInterval) {
+                    clearInterval(latencyCheckInterval);
+                }
+                
+                latencyCheckInterval = setInterval(() => {
+                    if (!document.hidden && video.buffered.length > 0 && !video.paused) {
+                        const bufferEnd = video.buffered.end(0);
+                        const currentTime = video.currentTime;
+                        const latency = bufferEnd - currentTime;
+                        
+                        if (latency > targetLatency + 0.5) {
+                            video.playbackRate = 1.2;
+                        } else if (latency < targetLatency - 0.2) {
+                            video.playbackRate = 0.95;
+                        } else {
+                            video.playbackRate = 1.0;
+                        }
+                    }
+                }, 500);
+                
                 isPlaying = true;
                 updatePlayButton();
             } catch (error) {
@@ -564,6 +584,10 @@
         }
         
         function stopStream() {
+            if (latencyCheckInterval) {
+                clearInterval(latencyCheckInterval);
+                latencyCheckInterval = null;
+            }
             if (player) {
                 player.pause();
                 player.unload();
@@ -604,6 +628,23 @@
 
         let config = {};
         let editingIndex = -1;
+        let latencyCheckInterval = null;
+
+        // 监听页面可见性变化
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                console.log('Page hidden');
+            } else {
+                console.log('Page visible, jumping to live edge');
+                const video = document.getElementById('video');
+                if (video && video.buffered.length > 0) {
+                    video.currentTime = video.buffered.end(0) - 0.1;
+                    if (video.paused) {
+                        video.play();
+                    }
+                }
+            }
+        });
 
         async function load() {
             const res = await fetch('/api/config');

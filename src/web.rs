@@ -163,9 +163,10 @@ impl FlvStreamManager {
         if self.is_sequence_header(msg) {
             self.save_sequence_header(stream_id, msg).await;
             *state.is_h264_aac.write().await = true;
-            // 重置关键帧状态，等待新的GOP
+            // 重置关键帧状态和基准时间戳，等待新的GOP
             *state.keyframe_sent.write().await = false;
-            tracing::info!("FLV Manager: Stream {} sequence header updated, waiting for keyframe", stream_id);
+            *state.base_timestamp.write().await = None;
+            tracing::info!("FLV Manager: Stream {} sequence header updated, reset base timestamp", stream_id);
             return;
         }
 
@@ -182,11 +183,15 @@ impl FlvStreamManager {
                 *base_ts = Some(msg.timestamp);
                 tracing::info!("FLV Manager: Set base timestamp {} for stream: {}", msg.timestamp, stream_id);
             }
+            drop(base_ts);
             *state.keyframe_sent.write().await = true;
-            // 保存关键帧但重置时间戳为0
-            if let Some(flv_data) = self.convert_to_flv_with_timestamp(msg, 0) {
+            
+            // 保存关键帧，使用相对时间戳
+            let base = state.base_timestamp.read().await.unwrap_or(0);
+            let relative_ts = msg.timestamp.wrapping_sub(base);
+            if let Some(flv_data) = self.convert_to_flv_with_timestamp(msg, relative_ts) {
                 *state.last_keyframe.write().await = Some(flv_data);
-                tracing::debug!("FLV Manager: Saved keyframe for stream: {}", stream_id);
+                tracing::debug!("FLV Manager: Saved keyframe with relative ts {} for stream: {}", relative_ts, stream_id);
             }
         }
 
