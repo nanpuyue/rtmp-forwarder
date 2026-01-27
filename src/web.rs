@@ -178,7 +178,7 @@ impl FlvStreamManager {
             // 保存关键帧但重置时间戳为0
             if let Some(flv_data) = self.convert_to_flv_with_timestamp(msg, 0) {
                 *state.last_keyframe.write().await = Some(flv_data);
-                tracing::info!("FLV Manager: Saved keyframe for stream: {}", stream_id);
+                tracing::debug!("FLV Manager: Saved keyframe for stream: {}", stream_id);
             }
         }
 
