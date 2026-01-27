@@ -93,7 +93,7 @@ impl TargetActor {
         let mut conn: Option<tokio::net::tcp::OwnedWriteHalf> = None;
         let mut chunk_size = 128usize;
 
-        info!("Target Worker [{}] started", self.config.addr);
+        info!("Forwarder [{}] started", self.config.addr);
 
         while let Some(event) = self.rx.recv().await {
             match event {
@@ -112,7 +112,7 @@ impl TargetActor {
                     // Forward media data if connected
                     if let Some(ref mut w) = conn {
                         if let Err(e) = write_rtmp_message(w, &msg, chunk_size).await {
-                            error!("Target [{}] error: {}", self.config.addr, e);
+                            error!("Destination [{}] error: {}", self.config.addr, e);
                             conn = None;
                         } else if msg.msg_type == 1 && msg.payload.len() >= 4 {
                             // Sync output chunk size if target requests change (via SetChunkSize)
@@ -128,7 +128,7 @@ impl TargetActor {
                 }
             }
         }
-        info!("Target Worker [{}] stopped", self.config.addr);
+        info!("Forwarder [{}] stopped", self.config.addr);
     }
 
     /// Attempt to connect and perform RTMP handshake + setup.
@@ -157,7 +157,7 @@ impl TargetActor {
 
                     // Perform RTMP command sequence (Connect -> Publish)
                     if self.setup_protocol(&mut w, a, s).await.is_ok() {
-                        info!("Target [{}] connected", addr);
+                        info!("Destination [{}] connected", addr);
                         return Some(w);
                     }
                 }
@@ -213,7 +213,7 @@ impl TargetActor {
             self.config.app.as_deref().or(self.snapshot.client_app.as_deref()),
             self.config.stream.as_deref().or(self.snapshot.client_stream.as_deref())
         ) {
-            info!("Target [{}] graceful shutdown: stream={}", self.config.addr, stream);
+            info!("Destination [{}] graceful shutdown: stream={}", self.config.addr, stream);
             
             crate::rtmp::send_rtmp_command(w, 3, 1, 128, "FCUnpublish", 6.0, &[], &[
                 crate::amf::Amf0::String(stream.into())
