@@ -501,16 +501,16 @@
             <span class="modal-close" onclick="closeModal()">&times;</span>
             <div class="modal-title">编辑推流目标</div>
             <div class="form-group">
-                <label>主机 + App</label>
-                <input type="text" id="modal_addr" placeholder="rtmp://host:port/app">
+                <label>推流地址</label>
+                <input type="text" id="modal_addr" placeholder="rtmp://">
             </div>
             <div class="form-group">
-                <label>Stream</label>
-                <input type="text" id="modal_stream" placeholder="stream">
+                <label>推流码</label>
+                <input type="text" id="modal_stream" placeholder="">
             </div>
-            <div class="modal-buttons">
-                <button class="btn btn-save" onclick="saveUpstream()">保存</button>
+            <div class="modal-buttons" style="justify-content: flex-end;">
                 <button class="btn btn-remove" onclick="deleteUpstream()">删除</button>
+                <button class="btn btn-save" onclick="saveUpstream()">保存</button>
             </div>
         </div>
     </div>
@@ -544,18 +544,39 @@
                 }, {
                     enableWorker: false,
                     enableStashBuffer: false,
-                    stashInitialSize: 128,
                     autoCleanupSourceBuffer: true,
                     autoCleanupMaxBackwardDuration: 3,
                     autoCleanupMinBackwardDuration: 2,
-                    fixAudioTimestampGap: false,
-                    accurateSeek: false,
-                    lazyLoad: false,
                 });
                 
                 player.attachMediaElement(document.getElementById('video'));
                 player.load();
                 player.play();
+                
+                // 低延迟配置 - 使用播放速率追赶
+                const video = document.getElementById('video');
+                let targetLatency = 0.5; // 目标延迟0.5秒
+                
+                setInterval(() => {
+                    if (video.buffered.length > 0 && !video.paused) {
+                        const bufferEnd = video.buffered.end(0);
+                        const currentTime = video.currentTime;
+                        const latency = bufferEnd - currentTime;
+                        
+                        // 根据延迟动态调整播放速率
+                        if (latency > targetLatency + 0.5) {
+                            // 延迟过大，加速播放
+                            video.playbackRate = 1.2;
+                        } else if (latency < targetLatency - 0.2) {
+                            // 延迟过小，减速播放
+                            video.playbackRate = 0.95;
+                        } else {
+                            // 延迟正常，正常播放
+                            video.playbackRate = 1.0;
+                        }
+                    }
+                }, 500);
+                
                 isPlaying = true;
                 updatePlayButton();
             } catch (error) {
