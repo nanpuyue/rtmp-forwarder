@@ -1,17 +1,17 @@
 //! RTMP Forwarding Engine
 //! 
-//! This module implements the "Target Actor" model for RTMP stream fan-out.
-//! Each `TargetActor` represents a single destination server and is responsible
+//! This module implements the "Forwarder" model for RTMP stream fan-out.
+//! Each `Forwarder` represents a single destination server and is responsible
 //! for its own connection lifecycle, handshaking, and media forwarding.
 //!
 //! Architecture:
-//! 1. **Isolation**: Failures in one target (timeouts, disconnects) do not affect
-//!    the source client or other targets.
+//! 1. **Isolation**: Failures in one destination (timeouts, disconnects) do not affect
+//!    the source client or other destinations.
 //! 2. **State Syncing**: Using `ProtocolSnapshot`, we capture client metadata
-//!    and sequence headers during live streaming to ensure reconnected targets
+//!    and sequence headers during live streaming to ensure reconnected destinations
 //!    can resume immediately.
 //! 3. **Protocol Unification**: Handles both original relay (dynamic path) and
-//!    explicit upstream targets through a unified path detection mechanism.
+//!    explicit upstream destinations through a unified path detection mechanism.
 
 use crate::rtmp::{write_rtmp_message, RtmpMessage};
 use crate::amf::amf_command_name;
@@ -24,7 +24,7 @@ use tokio::io::AsyncReadExt;
 use tracing::{error, info};
 
 /// ProtocolSnapshot caches the critical state headers and dynamic names
-/// received from the client to sync with new or reconnected targets.
+/// received from the client to sync with new or reconnected destinations.
 #[derive(Clone, Default)]
 pub struct ProtocolSnapshot {
     pub metadata: Option<RtmpMessage>,
@@ -79,15 +79,15 @@ pub enum ForwardEvent {
     Shutdown,
 }
 
-/// TargetActor handles forwarding to a single upstream server.
-/// It runs in its own task to isolate client from target network issues.
-pub struct TargetActor {
+/// Forwarder handles forwarding to a single upstream server.
+/// It runs in its own task to isolate client from destination network issues.
+pub struct Forwarder {
     pub config: UpstreamConfig,
     pub rx: mpsc::Receiver<ForwardEvent>,
     pub snapshot: ProtocolSnapshot,
 }
 
-impl TargetActor {
+impl Forwarder {
     /// Main loop for the forwarder task.
     pub async fn run(mut self) {
         let mut conn: Option<tokio::net::tcp::OwnedWriteHalf> = None;
@@ -115,7 +115,7 @@ impl TargetActor {
                             error!("Destination [{}] error: {}", self.config.addr, e);
                             conn = None;
                         } else if msg.msg_type == 1 && msg.payload.len() >= 4 {
-                            // Sync output chunk size if target requests change (via SetChunkSize)
+                            // Sync output chunk size if destination requests change (via SetChunkSize)
                             chunk_size = u32::from_be_bytes(msg.payload[..4].try_into().unwrap()) as usize;
                         }
                     }
@@ -141,7 +141,7 @@ impl TargetActor {
             let mut addr = self.config.addr.clone();
             if !addr.contains(':') { addr.push_str(":1935"); }
 
-            // Connect to upstream target
+            // Connect to upstream destination
             if let Ok(Ok(mut socket)) = tokio::time::timeout(std::time::Duration::from_secs(3), TcpStream::connect(&addr)).await {
                 socket.set_nodelay(true).ok();
                 
@@ -149,7 +149,7 @@ impl TargetActor {
                 if handshake_with_upstream(&mut socket).await.is_ok() {
                     let (mut r, mut w) = socket.into_split();
                     
-                    // Spawn a background task to drain anything sent from target to us
+                    // Spawn a background task to drain anything sent from destination to us
                     tokio::spawn(async move {
                         let mut buf = [0u8; 1024];
                         while let Ok(n) = r.read(&mut buf).await { if n == 0 { break; } }
