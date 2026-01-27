@@ -538,26 +538,19 @@
                 player = flvjs.createPlayer({
                     type: 'flv',
                     url: `/live/stream.flv?t=${Date.now()}`,
+                    isLive: true,
+                    hasAudio: true,
+                    hasVideo: true,
+                }, {
                     enableWorker: false,
-                    enableStashBuffer: true,
+                    enableStashBuffer: false,
                     stashInitialSize: 128,
                     autoCleanupSourceBuffer: true,
                     autoCleanupMaxBackwardDuration: 3,
                     autoCleanupMinBackwardDuration: 2,
                     fixAudioTimestampGap: false,
                     accurateSeek: false,
-                    seekType: 'range',
-                    seekParamStart: 'bstart',
-                    seekParamEnd: 'bend',
-                    rangeLoadZeroStart: false,
-                    lazyLoad: true,
-                    lazyLoadMaxDuration: 3 * 60,
-                    lazyLoadRecoverDuration: 30,
-                    deferLoadAfterSourceOpen: true,
-                    autoCleanupSourceBuffer: true,
-                    enableWorker: false,
-                    enableStashBuffer: false,
-                    stashInitialSize: 128
+                    lazyLoad: false,
                 });
                 
                 player.attachMediaElement(document.getElementById('video'));

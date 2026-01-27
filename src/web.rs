@@ -117,6 +117,8 @@ struct FlvStreamState {
     is_h264_aac: RwLock<bool>,
     /// 是否已发送关键帧
     keyframe_sent: RwLock<bool>,
+    /// 基准时间戳（第一个关键帧的时间戳）
+    base_timestamp: RwLock<Option<u32>>,
 }
 
 impl FlvStreamManager {
@@ -142,6 +144,7 @@ impl FlvStreamManager {
             last_keyframe: RwLock::new(None),
             is_h264_aac: RwLock::new(false),
             keyframe_sent: RwLock::new(false),
+            base_timestamp: RwLock::new(None),
         });
 
         streams.insert(stream_id.to_string(), state.clone());
@@ -174,6 +177,11 @@ impl FlvStreamManager {
         // 检查是否为关键帧
         let is_keyframe = self.is_keyframe(msg);
         if is_keyframe {
+            let mut base_ts = state.base_timestamp.write().await;
+            if base_ts.is_none() {
+                *base_ts = Some(msg.timestamp);
+                tracing::info!("FLV Manager: Set base timestamp {} for stream: {}", msg.timestamp, stream_id);
+            }
             *state.keyframe_sent.write().await = true;
             // 保存关键帧但重置时间戳为0
             if let Some(flv_data) = self.convert_to_flv_with_timestamp(msg, 0) {
@@ -187,8 +195,12 @@ impl FlvStreamManager {
             return;
         }
 
+        // 计算相对时间戳
+        let base_ts = state.base_timestamp.read().await.unwrap_or(0);
+        let relative_ts = msg.timestamp.wrapping_sub(base_ts);
+
         // 转换为FLV格式并广播
-        if let Some(flv_data) = self.convert_to_flv(msg) {
+        if let Some(flv_data) = self.convert_to_flv_with_timestamp(msg, relative_ts) {
             let _ = state.tx.send(flv_data);
         }
     }
