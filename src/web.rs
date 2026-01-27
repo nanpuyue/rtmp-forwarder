@@ -77,10 +77,11 @@ async fn get_config(Extension(config): Extension<SharedConfig>) -> Json<AppConfi
     Json(c.clone())
 }
 
-async fn get_streams(Extension(_manager): Extension<std::sync::Arc<FlvStreamManager>>) -> Json<Vec<String>> {
-    // 固定返回单一流 "stream"
-    tracing::info!("HTTP API: Stream list requested, returning fixed stream: stream");
-    Json(vec!["stream".to_string()])
+async fn get_streams(Extension(manager): Extension<std::sync::Arc<FlvStreamManager>>) -> Json<Vec<String>> {
+    let streams = manager.streams.read().await;
+    let stream_ids: Vec<String> = streams.keys().cloned().collect();
+    tracing::debug!("HTTP API: Stream list requested, found {} streams: {:?}", stream_ids.len(), stream_ids);
+    Json(stream_ids)
 }
 
 async fn update_config(
