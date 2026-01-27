@@ -9,6 +9,8 @@ use axum::{
 use std::net::SocketAddr;
 use crate::config::{SharedConfig, AppConfig, save_config};
 use crate::flv_manager::FlvManager;
+use crate::forwarder_manager::ForwarderCommand;
+use tokio::sync::mpsc;
 use bytes::Bytes;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
@@ -20,7 +22,11 @@ use rust_embed::RustEmbed;
 #[folder = "static/"]
 struct Assets;
 
-pub async fn start_web_server(config: SharedConfig, flv_manager: std::sync::Arc<FlvManager>) {
+pub async fn start_web_server(
+    config: SharedConfig,
+    flv_manager: std::sync::Arc<FlvManager>,
+    forwarder_cmd_tx: mpsc::UnboundedSender<ForwarderCommand>,
+) {
     let addr_str = config.read().unwrap().web_addr.clone();
     let addr: SocketAddr = addr_str.parse().unwrap_or(([0, 0, 0, 0], 8080).into());
 
@@ -31,6 +37,7 @@ pub async fn start_web_server(config: SharedConfig, flv_manager: std::sync::Arc<
         .fallback(static_handler)
         .layer(Extension(config))
         .layer(Extension(flv_manager))
+        .layer(Extension(forwarder_cmd_tx))
         .layer(CorsLayer::permissive());
 
     info!("Web dashboard available at http://{}", addr);
@@ -77,12 +84,19 @@ async fn get_config(Extension(config): Extension<SharedConfig>) -> Json<AppConfi
 
 async fn update_config(
     Extension(config): Extension<SharedConfig>,
+    Extension(forwarder_cmd_tx): Extension<mpsc::UnboundedSender<ForwarderCommand>>,
     Json(new_config): Json<AppConfig>,
 ) -> Json<bool> {
     let mut c = config.write().unwrap();
     *c = new_config.clone();
     
     let success = save_config(&c).is_ok();
+    
+    if success {
+        info!("Config saved, notifying ForwarderManager with {} upstreams", new_config.upstreams.len());
+        forwarder_cmd_tx.send(ForwarderCommand::UpdateConfig(new_config.upstreams)).ok();
+    }
+    
     Json(success)
 }
 

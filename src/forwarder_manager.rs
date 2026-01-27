@@ -72,11 +72,14 @@ impl ForwarderManager {
                 Some(cmd) = self.command_rx.recv() => {
                     match cmd {
                         ForwarderCommand::UpdateConfig(new_config) => {
-                            info!("Updating forwarder config");
+                            info!("Received config update with {} upstreams", new_config.len());
                             *self.config.write().await = new_config;
                             if let Some(ref snapshot) = current_snapshot {
+                                info!("Stream is active, restarting forwarders with new config");
                                 self.stop_forwarders(&mut forwarders).await;
                                 self.start_forwarders(&mut forwarders, snapshot.clone()).await;
+                            } else {
+                                info!("No active stream, config will be applied on next publish");
                             }
                         }
                         ForwarderCommand::Shutdown => {
