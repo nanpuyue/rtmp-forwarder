@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::{mpsc, RwLock};
 use crate::stream_manager::{StreamManager, StreamMessage, StreamEvent, StreamSnapshot};
-use crate::forwarder::{ForwardEvent, TargetActor};
+use crate::forwarder::{ForwardEvent, Forwarder};
 use crate::server::UpstreamConfig;
 use crate::rtmp::RtmpMessage;
 use tracing::info;
@@ -109,7 +109,7 @@ impl ForwarderManager {
             
             let (tx, rx) = mpsc::channel(128);
             
-            let actor = TargetActor {
+            let actor = Forwarder {
                 config: upstream.clone(),
                 rx,
                 snapshot: crate::forwarder::ProtocolSnapshot {
