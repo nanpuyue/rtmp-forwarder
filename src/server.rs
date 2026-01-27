@@ -18,7 +18,7 @@ pub struct UpstreamConfig {
     pub enabled: bool,
 }
 
-pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::SharedConfig) -> Result<()> {
+pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::SharedConfig, flv_manager: std::sync::Arc<FlvStreamManager>) -> Result<()> {
     client.set_nodelay(true)?;
     handshake_with_client(&mut client).await?;
 
@@ -28,9 +28,6 @@ pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::
 
     let mut active_workers: std::collections::HashMap<String, mpsc::Sender<ForwardEvent>> = std::collections::HashMap::new();
     let mut snapshot = ProtocolSnapshot::default();
-    
-    // HTTP-FLV流管理器
-    let flv_manager = std::sync::Arc::new(FlvStreamManager::new());
 
     loop {
         // 1. Sync targets
@@ -131,7 +128,7 @@ pub async fn handle_client(mut client: TcpStream, shared_config: crate::config::
         // 4. Handle HTTP-FLV streaming
         if let Some(ref stream_name) = snapshot.client_stream {
             tracing::debug!("Server: Forwarding RTMP message to FLV manager for stream: {}", stream_name);
-            let _ = flv_manager.handle_rtmp_message(stream_name, &msg).await;
+            flv_manager.handle_rtmp_message(stream_name, &msg).await;
         } else {
             tracing::debug!("Server: No stream name available for RTMP message type: {}", msg.msg_type);
         }

@@ -15,7 +15,7 @@ use tracing::info;
 use tower_http::cors::CorsLayer;
 use rust_embed::RustEmbed;
 use bytes::BufMut;
-use tokio_stream::{StreamExt, once};
+use tokio_stream::StreamExt;
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
@@ -80,6 +80,7 @@ async fn get_config(Extension(config): Extension<SharedConfig>) -> Json<AppConfi
 async fn get_streams(Extension(manager): Extension<std::sync::Arc<FlvStreamManager>>) -> Json<Vec<String>> {
     let streams = manager.streams.read().await;
     let stream_ids: Vec<String> = streams.keys().cloned().collect();
+    tracing::info!("HTTP API: Stream list requested, found {} streams: {:?}", stream_ids.len(), stream_ids);
     Json(stream_ids)
 }
 
@@ -106,8 +107,6 @@ pub struct FlvStreamManager {
 struct FlvStreamState {
     /// 广播通道，用于向多个HTTP客户端发送数据
     tx: broadcast::Sender<Bytes>,
-    /// 流的元数据
-    metadata: RwLock<Option<Bytes>>,
     /// 视频序列头
     video_seq_hdr: RwLock<Option<Bytes>>,
     /// 音频序列头
@@ -134,13 +133,13 @@ impl FlvStreamManager {
         let (tx, _) = broadcast::channel(1024);
         let state = std::sync::Arc::new(FlvStreamState {
             tx,
-            metadata: RwLock::new(None),
             video_seq_hdr: RwLock::new(None),
             audio_seq_hdr: RwLock::new(None),
             is_h264_aac: RwLock::new(false),
         });
 
         streams.insert(stream_id.to_string(), state.clone());
+        tracing::info!("FLV Manager: Created new stream state for: {}", stream_id);
         state
     }
 
@@ -151,40 +150,43 @@ impl FlvStreamManager {
         
         let state = self.get_or_create_stream(stream_id).await;
         
-        // 检查编码格式
+        // 检查并保存序列头
+        if self.is_sequence_header(msg) {
+            self.save_sequence_header(stream_id, msg).await;
+            *state.is_h264_aac.write().await = true;
+            tracing::info!("FLV Manager: Stream {} now supports H.264+AAC", stream_id);
+        }
+
+        // 只处理支持的编码格式
         if !*state.is_h264_aac.read().await {
-            if !self.check_codec_support(msg) {
-                tracing::debug!("FLV Manager: Unsupported codec for stream: {}", stream_id);
-                return;
-            }
-            // 更新编码支持状态
-            let mut streams = self.streams.write().await;
-            if let Some(s) = streams.get_mut(stream_id) {
-                *s.is_h264_aac.write().await = true;
-                tracing::info!("FLV Manager: Stream {} now supports H.264+AAC", stream_id);
-            }
+            tracing::debug!("FLV Manager: Stream {} not ready for H.264+AAC", stream_id);
+            return;
         }
 
         // 转换为FLV格式并广播
         if let Some(flv_data) = self.convert_to_flv(msg) {
             if let Err(_) = state.tx.send(flv_data) {
-                // 广播失败，可能是没有客户端连接
                 tracing::debug!("FLV Manager: Broadcast failed for stream: {}", stream_id);
             } else {
                 tracing::debug!("FLV Manager: Successfully broadcasted message for stream: {}", stream_id);
             }
-        } else {
-            tracing::debug!("FLV Manager: Message not converted to FLV for stream: {}", stream_id);
         }
     }
 
-    /// 检查是否支持H.264+AAC编码
-    fn check_codec_support(&self, msg: &RtmpMessage) -> bool {
+    /// 检查是否为序列头
+    fn is_sequence_header(&self, msg: &RtmpMessage) -> bool {
         match msg.msg_type {
-            // 视频序列头 (H.264)
-            9 if msg.payload.len() >= 2 && msg.payload[0] == 0x17 && msg.payload[1] == 0 => true,
-            // 音频序列头 (AAC)
-            8 if msg.payload.len() >= 2 && (msg.payload[0] >> 4) == 10 && msg.payload[1] == 0 => true,
+            9 if msg.payload.len() >= 2 => {
+                let frame_type = (msg.payload[0] >> 4) & 0x0F;
+                let codec_id = msg.payload[0] & 0x0F;
+                let avc_packet_type = msg.payload[1];
+                frame_type == 1 && codec_id == 7 && avc_packet_type == 0
+            },
+            8 if msg.payload.len() >= 2 => {
+                let sound_format = (msg.payload[0] >> 4) & 0x0F;
+                let aac_packet_type = msg.payload[1];
+                sound_format == 10 && aac_packet_type == 0
+            },
             _ => false,
         }
     }
@@ -199,11 +201,18 @@ impl FlvStreamManager {
                 // FLV Tag Header
                 flv_tag.put_u8(0x09); // Tag Type: Video
                 flv_tag.put_u24(msg.payload.len() as u32); // Data Size
-                flv_tag.put_u24(msg.timestamp); // Timestamp
-                flv_tag.put_u8((msg.timestamp >> 24) as u8); // Timestamp Extended
+                
+                // 时间戳处理 - 低24位
+                let timestamp_low = msg.timestamp & 0xFFFFFF;
+                flv_tag.put_u24(timestamp_low);
+                
+                // 时间戳扩展 - 高8位
+                let timestamp_ext = ((msg.timestamp >> 24) & 0xFF) as u8;
+                flv_tag.put_u8(timestamp_ext);
+                
                 flv_tag.put_u24(0); // StreamID
                 
-                // FLV Video Tag Body
+                // FLV Video Tag Body - 直接使用RTMP payload
                 flv_tag.extend_from_slice(&msg.payload);
                 
                 // Previous Tag Size
@@ -218,11 +227,18 @@ impl FlvStreamManager {
                 // FLV Tag Header
                 flv_tag.put_u8(0x08); // Tag Type: Audio
                 flv_tag.put_u24(msg.payload.len() as u32); // Data Size
-                flv_tag.put_u24(msg.timestamp); // Timestamp
-                flv_tag.put_u8((msg.timestamp >> 24) as u8); // Timestamp Extended
+                
+                // 时间戳处理 - 低24位
+                let timestamp_low = msg.timestamp & 0xFFFFFF;
+                flv_tag.put_u24(timestamp_low);
+                
+                // 时间戳扩展 - 高8位
+                let timestamp_ext = ((msg.timestamp >> 24) & 0xFF) as u8;
+                flv_tag.put_u8(timestamp_ext);
+                
                 flv_tag.put_u24(0); // StreamID
                 
-                // FLV Audio Tag Body
+                // FLV Audio Tag Body - 直接使用RTMP payload
                 flv_tag.extend_from_slice(&msg.payload);
                 
                 // Previous Tag Size
@@ -252,47 +268,133 @@ impl FlvStreamManager {
             _ => None,
         }
     }
+
+    /// 保存序列头
+    async fn save_sequence_header(&self, stream_id: &str, msg: &RtmpMessage) {
+        let state = self.get_or_create_stream(stream_id).await;
+        
+        match msg.msg_type {
+            9 if msg.payload.len() >= 2 => {
+                let frame_type = (msg.payload[0] >> 4) & 0x0F;
+                let codec_id = msg.payload[0] & 0x0F;
+                let avc_packet_type = msg.payload[1];
+                
+                if frame_type == 1 && codec_id == 7 && avc_packet_type == 0 {
+                    if let Some(flv_data) = self.convert_to_flv(msg) {
+                        *state.video_seq_hdr.write().await = Some(flv_data);
+                        tracing::info!("FLV Manager: Saved video sequence header for stream: {}", stream_id);
+                    }
+                }
+            },
+            8 if msg.payload.len() >= 2 => {
+                let sound_format = (msg.payload[0] >> 4) & 0x0F;
+                let aac_packet_type = msg.payload[1];
+                
+                if sound_format == 10 && aac_packet_type == 0 {
+                    if let Some(flv_data) = self.convert_to_flv(msg) {
+                        *state.audio_seq_hdr.write().await = Some(flv_data);
+                        tracing::info!("FLV Manager: Saved audio sequence header for stream: {}", stream_id);
+                    }
+                }
+            },
+            _ => {}
+        }
+    }
+
+    /// 获取序列头数据
+    pub async fn get_sequence_headers(&self, stream_id: &str) -> (Option<Bytes>, Option<Bytes>) {
+        let streams = self.streams.read().await;
+        if let Some(state) = streams.get(stream_id) {
+            let video_hdr = state.video_seq_hdr.read().await.clone();
+            let audio_hdr = state.audio_seq_hdr.read().await.clone();
+            (video_hdr, audio_hdr)
+        } else {
+            (None, None)
+        }
+    }
 }
 
-    /// HTTP-FLV流处理器
+/// HTTP-FLV流处理器
 pub async fn handle_flv_stream(
     Path(stream_id): Path<String>,
     Extension(manager): Extension<std::sync::Arc<FlvStreamManager>>,
 ) -> impl IntoResponse {
+    tracing::info!("HTTP-FLV: Request for stream: {}", stream_id);
+    
+    // 移除 .flv 后缀（如果存在）
+    let stream_name = if stream_id.ends_with(".flv") {
+        stream_id.strip_suffix(".flv").unwrap().to_string()
+    } else {
+        stream_id
+    };
+    
+    tracing::info!("HTTP-FLV: Looking for stream: {}", stream_name);
+    
     // 检查流是否存在且支持H.264+AAC
     let streams = manager.streams.read().await;
-    let state = match streams.get(&stream_id) {
-        Some(state) if *state.is_h264_aac.read().await => state.clone(),
-        _ => {
+    let state = match streams.get(&stream_name) {
+        Some(state) if *state.is_h264_aac.read().await => {
+            tracing::info!("HTTP-FLV: Stream {} is available and supports H.264+AAC", stream_name);
+            state.clone()
+        },
+        Some(_) => {
+            tracing::warn!("HTTP-FLV: Stream {} exists but does not support H.264+AAC", stream_name);
+            return StatusCode::NOT_FOUND.into_response();
+        },
+        None => {
+            tracing::warn!("HTTP-FLV: Stream {} not found", stream_name);
             return StatusCode::NOT_FOUND.into_response();
         }
     };
     drop(streams);
 
-    // 简化的FLV流响应
+    // 创建FLV头部
+    let flv_header = create_flv_header();
+    
+    // 获取序列头
+    let (video_seq_hdr, audio_seq_hdr) = manager.get_sequence_headers(&stream_name).await;
+    
+    // 订阅广播流
     let rx = state.tx.subscribe();
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx)
-        .map(|result: Result<Bytes, _>| Ok::<Bytes, std::convert::Infallible>(result.unwrap_or_else(|_| Bytes::new())));
+        .map(|result: Result<Bytes, _>| {
+            match result {
+                Ok(data) => Ok::<Bytes, std::convert::Infallible>(data),
+                Err(_) => Ok::<Bytes, std::convert::Infallible>(Bytes::new())
+            }
+        });
 
-    // 发送FLV头部
-    let flv_header = Bytes::from_static(b"FLV\x01\x05\x00\x00\x00\x09\x00\x00\x00\x00");
+    // 构建初始数据流：FLV头部 + 序列头 + 实时数据
+    let mut initial_data = vec![Ok::<Bytes, std::convert::Infallible>(flv_header)];
     
-    let flv_stream = once(Ok::<Bytes, std::convert::Infallible>(flv_header)).chain(stream);
+    if let Some(video_hdr) = video_seq_hdr {
+        initial_data.push(Ok(video_hdr));
+        tracing::info!("HTTP-FLV: Added video sequence header for stream: {}", stream_name);
+    }
+    
+    if let Some(audio_hdr) = audio_seq_hdr {
+        initial_data.push(Ok(audio_hdr));
+        tracing::info!("HTTP-FLV: Added audio sequence header for stream: {}", stream_name);
+    }
+    
+    let flv_stream = tokio_stream::iter(initial_data).chain(stream);
 
     Response::builder()
+        .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "video/x-flv")
-        .header(header::CACHE_CONTROL, "no-cache")
+        .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+        .header(header::PRAGMA, "no-cache")
+        .header(header::EXPIRES, "0")
         .header(header::CONNECTION, "keep-alive")
+        .header(header::TRANSFER_ENCODING, "chunked")
         .body(Body::from_stream(flv_stream))
         .unwrap()
 }
 
 /// 创建FLV文件头部
-fn create_flv_header() -> bool {
-    false // 返回false表示需要发送FLV头部
-}
-
-/// 为Router添加FLV流路由
-pub fn add_flv_routes(router: Router) -> Router {
-    router.route("/live/:stream_id.flv", get(handle_flv_stream))
+fn create_flv_header() -> Bytes {
+    let mut header = BytesMut::with_capacity(13);
+    header.put_slice(b"FLV\x01\x05\x00\x00\x00\x09");
+    header.put_u32(0); // PreviousTagSize0
+    header.freeze()
 }
