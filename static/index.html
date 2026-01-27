@@ -553,25 +553,24 @@
                 player.load();
                 player.play();
                 
-                // 低延迟配置 - 使用播放速率追赶
                 const video = document.getElementById('video');
-                let targetLatency = 0.5; // 目标延迟0.5秒
+                let targetLatency = 0.5;
                 
-                setInterval(() => {
-                    if (video.buffered.length > 0 && !video.paused) {
+                if (latencyCheckInterval) {
+                    clearInterval(latencyCheckInterval);
+                }
+                
+                latencyCheckInterval = setInterval(() => {
+                    if (!document.hidden && video.buffered.length > 0 && !video.paused) {
                         const bufferEnd = video.buffered.end(0);
                         const currentTime = video.currentTime;
                         const latency = bufferEnd - currentTime;
                         
-                        // 根据延迟动态调整播放速率
                         if (latency > targetLatency + 0.5) {
-                            // 延迟过大，加速播放
                             video.playbackRate = 1.2;
                         } else if (latency < targetLatency - 0.2) {
-                            // 延迟过小，减速播放
                             video.playbackRate = 0.95;
                         } else {
-                            // 延迟正常，正常播放
                             video.playbackRate = 1.0;
                         }
                     }
@@ -585,6 +584,10 @@
         }
         
         function stopStream() {
+            if (latencyCheckInterval) {
+                clearInterval(latencyCheckInterval);
+                latencyCheckInterval = null;
+            }
             if (player) {
                 player.pause();
                 player.unload();
@@ -625,6 +628,23 @@
 
         let config = {};
         let editingIndex = -1;
+        let latencyCheckInterval = null;
+
+        // 监听页面可见性变化
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                console.log('Page hidden');
+            } else {
+                console.log('Page visible, jumping to live edge');
+                const video = document.getElementById('video');
+                if (video && video.buffered.length > 0) {
+                    video.currentTime = video.buffered.end(0) - 0.1;
+                    if (video.paused) {
+                        video.play();
+                    }
+                }
+            }
+        });
 
         async function load() {
             const res = await fetch('/api/config');
