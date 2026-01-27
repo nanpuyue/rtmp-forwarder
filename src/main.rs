@@ -114,7 +114,7 @@ async fn main() -> Result<()> {
         let cfg = shared_config.read().unwrap();
         cfg.upstreams.clone()
     };
-    let (forwarder_mgr, _forwarder_cmd_tx) = ForwarderManager::new(
+    let (forwarder_mgr, forwarder_cmd_tx) = ForwarderManager::new(
         stream_manager.clone(),
         initial_upstreams,
     );
@@ -128,8 +128,9 @@ async fn main() -> Result<()> {
     // 6. Start Web Server
     let web_conf = shared_config.clone();
     let web_flv_manager = flv_manager.clone();
+    let web_forwarder_cmd = forwarder_cmd_tx.clone();
     tokio::spawn(async move {
-        web::start_web_server(web_conf, web_flv_manager).await;
+        web::start_web_server(web_conf, web_flv_manager, web_forwarder_cmd).await;
     });
 
     // 7. Bind the listening socket based on current config
