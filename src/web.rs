@@ -111,8 +111,12 @@ struct FlvStreamState {
     video_seq_hdr: RwLock<Option<Bytes>>,
     /// 音频序列头
     audio_seq_hdr: RwLock<Option<Bytes>>,
+    /// 最后一个关键帧
+    last_keyframe: RwLock<Option<Bytes>>,
     /// 是否支持H.264+AAC
     is_h264_aac: RwLock<bool>,
+    /// 是否已发送关键帧
+    keyframe_sent: RwLock<bool>,
 }
 
 impl FlvStreamManager {
@@ -135,7 +139,9 @@ impl FlvStreamManager {
             tx,
             video_seq_hdr: RwLock::new(None),
             audio_seq_hdr: RwLock::new(None),
+            last_keyframe: RwLock::new(None),
             is_h264_aac: RwLock::new(false),
+            keyframe_sent: RwLock::new(false),
         });
 
         streams.insert(stream_id.to_string(), state.clone());
@@ -154,22 +160,46 @@ impl FlvStreamManager {
         if self.is_sequence_header(msg) {
             self.save_sequence_header(stream_id, msg).await;
             *state.is_h264_aac.write().await = true;
-            tracing::info!("FLV Manager: Stream {} now supports H.264+AAC", stream_id);
+            // 重置关键帧状态，等待新的GOP
+            *state.keyframe_sent.write().await = false;
+            tracing::info!("FLV Manager: Stream {} sequence header updated, waiting for keyframe", stream_id);
+            return;
         }
 
         // 只处理支持的编码格式
         if !*state.is_h264_aac.read().await {
-            tracing::debug!("FLV Manager: Stream {} not ready for H.264+AAC", stream_id);
+            return;
+        }
+
+        // 检查是否为关键帧
+        let is_keyframe = self.is_keyframe(msg);
+        if is_keyframe {
+            *state.keyframe_sent.write().await = true;
+            // 保存关键帧但重置时间戳为0
+            if let Some(flv_data) = self.convert_to_flv_with_timestamp(msg, 0) {
+                *state.last_keyframe.write().await = Some(flv_data);
+                tracing::info!("FLV Manager: Saved keyframe for stream: {}", stream_id);
+            }
+        }
+
+        // 只有在发送过关键帧后才广播其他帧
+        if !*state.keyframe_sent.read().await {
             return;
         }
 
         // 转换为FLV格式并广播
         if let Some(flv_data) = self.convert_to_flv(msg) {
-            if let Err(_) = state.tx.send(flv_data) {
-                tracing::debug!("FLV Manager: Broadcast failed for stream: {}", stream_id);
-            } else {
-                tracing::debug!("FLV Manager: Successfully broadcasted message for stream: {}", stream_id);
-            }
+            let _ = state.tx.send(flv_data);
+        }
+    }
+
+    /// 检查是否为关键帧
+    fn is_keyframe(&self, msg: &RtmpMessage) -> bool {
+        if msg.msg_type == 9 && msg.payload.len() >= 1 {
+            let frame_type = (msg.payload[0] >> 4) & 0x0F;
+            frame_type == 1 // 1 = keyframe
+        } else {
+            false
         }
     }
 
@@ -188,6 +218,24 @@ impl FlvStreamManager {
                 sound_format == 10 && aac_packet_type == 0
             },
             _ => false,
+        }
+    }
+
+    /// 转换RTMP消息为FLV格式（带时间戳重写）
+    fn convert_to_flv_with_timestamp(&self, msg: &RtmpMessage, timestamp: u32) -> Option<Bytes> {
+        match msg.msg_type {
+            9 => {
+                let mut flv_tag = BytesMut::new();
+                flv_tag.put_u8(0x09);
+                flv_tag.put_u24(msg.payload.len() as u32);
+                flv_tag.put_u24(timestamp & 0xFFFFFF);
+                flv_tag.put_u8(((timestamp >> 24) & 0xFF) as u8);
+                flv_tag.put_u24(0);
+                flv_tag.extend_from_slice(&msg.payload);
+                flv_tag.put_u32((msg.payload.len() + 11) as u32);
+                Some(flv_tag.freeze())
+            }
+            _ => self.convert_to_flv(msg)
         }
     }
 
@@ -280,7 +328,8 @@ impl FlvStreamManager {
                 let avc_packet_type = msg.payload[1];
                 
                 if frame_type == 1 && codec_id == 7 && avc_packet_type == 0 {
-                    if let Some(flv_data) = self.convert_to_flv(msg) {
+                    // 序列头时间戳设为0
+                    if let Some(flv_data) = self.convert_to_flv_with_timestamp(msg, 0) {
                         *state.video_seq_hdr.write().await = Some(flv_data);
                         tracing::info!("FLV Manager: Saved video sequence header for stream: {}", stream_id);
                     }
@@ -291,7 +340,8 @@ impl FlvStreamManager {
                 let aac_packet_type = msg.payload[1];
                 
                 if sound_format == 10 && aac_packet_type == 0 {
-                    if let Some(flv_data) = self.convert_to_flv(msg) {
+                    // 序列头时间戳设为0
+                    if let Some(flv_data) = self.convert_to_flv_with_timestamp(msg, 0) {
                         *state.audio_seq_hdr.write().await = Some(flv_data);
                         tracing::info!("FLV Manager: Saved audio sequence header for stream: {}", stream_id);
                     }
@@ -302,14 +352,15 @@ impl FlvStreamManager {
     }
 
     /// 获取序列头数据
-    pub async fn get_sequence_headers(&self, stream_id: &str) -> (Option<Bytes>, Option<Bytes>) {
+    pub async fn get_sequence_headers(&self, stream_id: &str) -> (Option<Bytes>, Option<Bytes>, Option<Bytes>) {
         let streams = self.streams.read().await;
         if let Some(state) = streams.get(stream_id) {
             let video_hdr = state.video_seq_hdr.read().await.clone();
             let audio_hdr = state.audio_seq_hdr.read().await.clone();
-            (video_hdr, audio_hdr)
+            let keyframe = state.last_keyframe.read().await.clone();
+            (video_hdr, audio_hdr, keyframe)
         } else {
-            (None, None)
+            (None, None, None)
         }
     }
 }
@@ -351,8 +402,8 @@ pub async fn handle_flv_stream(
     // 创建FLV头部
     let flv_header = create_flv_header();
     
-    // 获取序列头
-    let (video_seq_hdr, audio_seq_hdr) = manager.get_sequence_headers(&stream_name).await;
+    // 获取序列头和最后一个关键帧
+    let (video_seq_hdr, audio_seq_hdr, last_keyframe) = manager.get_sequence_headers(&stream_name).await;
     
     // 订阅广播流
     let rx = state.tx.subscribe();
@@ -364,17 +415,25 @@ pub async fn handle_flv_stream(
             }
         });
 
-    // 构建初始数据流：FLV头部 + 序列头 + 实时数据
+    // 构建初始数据流：FLV头部 + 序列头 + 关键帧 + 实时数据
     let mut initial_data = vec![Ok::<Bytes, std::convert::Infallible>(flv_header)];
     
+    // 先发送视频序列头
     if let Some(video_hdr) = video_seq_hdr {
         initial_data.push(Ok(video_hdr));
         tracing::info!("HTTP-FLV: Added video sequence header for stream: {}", stream_name);
     }
     
+    // 再发送音频序列头
     if let Some(audio_hdr) = audio_seq_hdr {
         initial_data.push(Ok(audio_hdr));
         tracing::info!("HTTP-FLV: Added audio sequence header for stream: {}", stream_name);
+    }
+    
+    // 最后发送关键帧（时间戳为0，作为参考帧）
+    if let Some(keyframe) = last_keyframe {
+        initial_data.push(Ok(keyframe));
+        tracing::info!("HTTP-FLV: Added reference keyframe for stream: {}", stream_name);
     }
     
     let flv_stream = tokio_stream::iter(initial_data).chain(stream);
