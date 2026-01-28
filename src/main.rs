@@ -117,7 +117,7 @@ async fn main() -> Result<()> {
         stream_manager.clone(),
         initial_upstreams,
     );
-    tokio::spawn(forwarder_mgr.run());
+    let forwarder_handle = tokio::spawn(forwarder_mgr.run());
     
     // 5. Create FLV manager
     let flv_manager = Arc::new(FlvManager::new(stream_manager.clone()));
@@ -137,16 +137,37 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(&listen_addr).await?;
     info!("RTMP listening on: {}", listen_addr);
 
-    loop {
-        let (client, peer) = listener.accept().await?;
-        let conf = shared_config.clone();
-        let server_stream_manager = stream_manager.clone();
+    // 8. Setup graceful shutdown
+    let shutdown_forwarder_cmd = forwarder_cmd_tx.clone();
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        info!("Received shutdown signal");
+        shutdown_forwarder_cmd.send(crate::forwarder_manager::ForwarderCommand::Shutdown).ok();
+        shutdown_tx.send(()).await.ok();
+    });
 
-        tokio::spawn(async move {
-            info!("Received connection from client: {}", peer);
-            if let Err(e) = server::handle_client(client, conf, server_stream_manager).await {
-                error!(error = %e, "connection error");
+    loop {
+        tokio::select! {
+            Ok((client, peer)) = listener.accept() => {
+                let conf = shared_config.clone();
+                let server_stream_manager = stream_manager.clone();
+
+                tokio::spawn(async move {
+                    info!("Received connection from client: {}", peer);
+                    if let Err(e) = server::handle_client(client, conf, server_stream_manager).await {
+                        error!(error = %e, "connection error");
+                    }
+                });
             }
-        });
+            _ = shutdown_rx.recv() => {
+                info!("Shutting down server");
+                break;
+            }
+        }
     }
+    
+    forwarder_handle.await.ok();
+    info!("Server stopped");
+    Ok(())
 }
