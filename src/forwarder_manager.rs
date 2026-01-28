@@ -4,7 +4,7 @@ use crate::stream_manager::{StreamManager, StreamMessage, StreamEvent, StreamSna
 use crate::forwarder::{ForwardEvent, Forwarder};
 use crate::server::ForwarderConfig;
 use crate::rtmp::RtmpMessage;
-use tracing::info;
+use tracing::{info, warn};
 
 pub enum ForwarderCommand {
     UpdateConfig(Vec<ForwarderConfig>),
@@ -146,8 +146,23 @@ impl ForwarderManager {
         forwarders: &mut Vec<Option<mpsc::Sender<ForwardEvent>>>,
         snapshot: StreamSnapshot,
     ) {
-        let config = self.config.read().await;
+        let mut config = self.config.read().await.clone();
         let mut running_configs = self.running_configs.write().await;
+        
+        // 中继地址为空时使用原始地址
+        if let Some(relay) = config.get_mut(0) {
+            if relay.addr.is_empty() && relay.enabled {
+                if let Some(ref addr) = snapshot.orig_dest_addr {
+                    relay.addr = addr.clone();
+                    info!("Using original destination for relay: {}", addr);
+                } else {
+                    warn!("Relay enabled but no address available");
+                    relay.enabled = false;
+                }
+            }
+        } else {
+            warn!("Relay config not found at index 0");
+        }
         
         let mut started = 0;
         let mut stopped = 0;
@@ -202,7 +217,7 @@ impl ForwarderManager {
         forwarders.truncate(config.len());
         
         // Update running_configs
-        *running_configs = config.clone();
+        *running_configs = config;
         
         info!("Forwarders synced: {} started, {} stopped, {} restarted", started, stopped, restarted);
     }

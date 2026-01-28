@@ -33,6 +33,7 @@ pub struct StreamSnapshot {
     pub metadata: Option<Bytes>,
     pub video_seq_hdr: Option<Bytes>,
     pub audio_seq_hdr: Option<Bytes>,
+    pub orig_dest_addr: Option<String>,
 }
 
 #[derive(Debug)]
@@ -46,6 +47,7 @@ pub struct StreamInfo {
     pub metadata: Option<Bytes>,
     pub video_seq_hdr: Option<Bytes>,
     pub audio_seq_hdr: Option<Bytes>,
+    pub orig_dest_addr: Option<String>,
 }
 
 #[derive(Debug)]
@@ -108,6 +110,7 @@ impl StreamManager {
                 metadata: s.metadata.clone(),
                 video_seq_hdr: s.video_seq_hdr.clone(),
                 audio_seq_hdr: s.audio_seq_hdr.clone(),
+                orig_dest_addr: s.orig_dest_addr.clone(),
             })
     }
 
@@ -121,7 +124,7 @@ impl StreamManager {
         Ok(())
     }
 
-    pub async fn handle_create_stream(&self, app_name: &str, _client_id: u32) -> Result<u32, StreamError> {
+    pub async fn handle_create_stream(&self, app_name: &str, _client_id: u32, orig_dest_addr: Option<String>) -> Result<u32, StreamError> {
         let mut stream = self.default_stream.write().await;
         
         match stream.as_ref() {
@@ -142,6 +145,7 @@ impl StreamManager {
                     metadata: None,
                     video_seq_hdr: None,
                     audio_seq_hdr: None,
+                    orig_dest_addr,
                 });
                 drop(stream);
                 
