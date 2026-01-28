@@ -93,8 +93,9 @@ async fn update_config(
     let success = save_config(&c).is_ok();
     
     if success {
-        info!("Config saved, notifying ForwarderManager with {} forwarders", new_config.forwarders.len());
-        forwarder_cmd_tx.send(ForwarderCommand::UpdateConfig(new_config.forwarders)).ok();
+        let forwarders = new_config.get_forwarders();
+        info!("Config saved, notifying ForwarderManager with {} forwarders", forwarders.len());
+        forwarder_cmd_tx.send(ForwarderCommand::UpdateConfig(forwarders)).ok();
     }
     
     Json(success)

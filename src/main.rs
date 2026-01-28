@@ -23,7 +23,7 @@ use tracing::{error, info};
 
 /* ================= args ================= */
 
-/// CLI: support `-l`/`--listen` and `-d`/`--dest`.
+/// CLI: support `-l`/`--listen`, `-d`/`--dest`, and `-r`/`--relay`.
 #[derive(Parser, Debug)]
 #[command(about = "RTMP forwarder proxy")]
 struct Cli {
@@ -111,7 +111,7 @@ async fn main() -> Result<()> {
     // 4. Create forwarder manager
     let initial_forwarders = {
         let cfg = shared_config.read().unwrap();
-        cfg.forwarders.clone()
+        cfg.get_forwarders()
     };
     let (forwarder_mgr, forwarder_cmd_tx) = ForwarderManager::new(
         stream_manager.clone(),
