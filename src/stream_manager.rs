@@ -58,19 +58,16 @@ pub enum StreamError {
 
 pub struct StreamManager {
     default_stream: Arc<RwLock<Option<StreamInfo>>>,
-    state_change_tx: mpsc::UnboundedSender<StreamEvent>,
     message_tx: broadcast::Sender<StreamMessage>,
 }
 
 impl StreamManager {
-    pub fn new() -> (Self, mpsc::UnboundedReceiver<StreamEvent>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    pub fn new() -> Self {
         let (msg_tx, _) = broadcast::channel(1024);
-        (Self {
+        Self {
             default_stream: Arc::new(RwLock::new(None)),
-            state_change_tx: tx,
             message_tx: msg_tx,
-        }, rx)
+        }
     }
     
     pub fn subscribe(&self) -> broadcast::Receiver<StreamMessage> {
@@ -148,8 +145,6 @@ impl StreamManager {
                     video_seq_hdr: None,
                     audio_seq_hdr: None,
                 });
-                
-                self.state_change_tx.send(StreamEvent::StreamCreated).ok();
                 Ok(1)
             }
             _ => unreachable!(),
@@ -173,7 +168,6 @@ impl StreamManager {
                 s.audio_seq_hdr = None;
                 drop(stream);
                 
-                self.state_change_tx.send(StreamEvent::StreamPublishing).ok();
                 self.message_tx.send(StreamMessage::StateChanged(StreamEvent::StreamPublishing)).ok();
                 Ok(())
             }
@@ -195,7 +189,6 @@ impl StreamManager {
                 s.publishing_client = None;
                 drop(stream);
                 
-                self.state_change_tx.send(StreamEvent::StreamIdle).ok();
                 self.message_tx.send(StreamMessage::StateChanged(StreamEvent::StreamIdle)).ok();
             }
         }
@@ -220,7 +213,6 @@ impl StreamManager {
                 s.publishing_client = None;
                 drop(stream);
                 
-                self.state_change_tx.send(StreamEvent::StreamClosed).ok();
                 self.message_tx.send(StreamMessage::StateChanged(StreamEvent::StreamClosed)).ok();
             }
         }
@@ -245,14 +237,12 @@ impl StreamManager {
                     s.publishing_client = None;
                     drop(stream);
                     
-                    self.state_change_tx.send(StreamEvent::StreamClosed).ok();
                     self.message_tx.send(StreamMessage::StateChanged(StreamEvent::StreamClosed)).ok();
                 }
                 StreamState::Closed => {
                     *stream = None;
                     drop(stream);
                     
-                    self.state_change_tx.send(StreamEvent::StreamDeleted).ok();
                     self.message_tx.send(StreamMessage::StateChanged(StreamEvent::StreamDeleted)).ok();
                 }
             }
@@ -270,7 +260,6 @@ impl StreamManager {
             
             if is_publishing_client {
                 *stream = None;
-                self.state_change_tx.send(StreamEvent::StreamDeleted).ok();
                 self.message_tx.send(StreamMessage::StateChanged(StreamEvent::StreamDeleted)).ok();
             }
         }
