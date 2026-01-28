@@ -21,7 +21,8 @@ use anyhow::Result;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio::io::AsyncReadExt;
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
+use std::time::{Duration, Instant};
 
 /// ProtocolSnapshot caches the critical state headers and dynamic names
 /// received from the client to sync with new or reconnected destinations.
@@ -79,6 +80,38 @@ pub enum ForwardEvent {
     Shutdown,
 }
 
+/// Retry state for connection attempts
+struct ConnectionState {
+    conn: Option<tokio::net::tcp::OwnedWriteHalf>,
+    failure: u32,
+    last_attempt: Option<Instant>,
+}
+
+const MAX_FAILURE: u32 = 5;
+
+impl ConnectionState {
+    fn new() -> Self {
+        Self {
+            conn: None,
+            failure: 0,
+            last_attempt: None,
+        }
+    }
+    
+    fn can_attempt(&self) -> bool {
+        if self.failure >= MAX_FAILURE {
+            return false;
+        }
+        
+        if let Some(last) = self.last_attempt {
+            let backoff_secs = 2u64.pow(self.failure);
+            last.elapsed() >= Duration::from_secs(backoff_secs)
+        } else {
+            true
+        }
+    }
+}
+
 /// Forwarder handles forwarding to a single forwarder server.
 /// It runs in its own task to isolate client from destination network issues.
 pub struct Forwarder {
@@ -90,7 +123,7 @@ pub struct Forwarder {
 impl Forwarder {
     /// Main loop for the forwarder task.
     pub async fn run(mut self) {
-        let mut conn: Option<tokio::net::tcp::OwnedWriteHalf> = None;
+        let mut state = ConnectionState::new();
         let mut chunk_size = 128usize;
 
         info!("Forwarder [{}] started", self.config.addr);
@@ -104,16 +137,30 @@ impl Forwarder {
                     // Skip forwarding control commands as we replay our own handshake
                     if msg.msg_type == 20 { continue; }
 
-                    // Establish connection lazily when app/stream info is ready
-                    if conn.is_none() {
-                        conn = self.try_connect().await;
+                    // Try to establish connection with retry logic
+                    if state.conn.is_none() && state.can_attempt() {
+                        state.last_attempt = Some(Instant::now());
+                        debug!("[{}] Connecting (attempt #{})", self.config.addr, state.failure + 1);
+                        
+                        if let Some(conn) = self.try_connect().await {
+                            info!("[{}] Connected successfully", self.config.addr);
+                            state.conn = Some(conn);
+                            state.failure = 0;
+                            state.last_attempt = None;
+                        } else {
+                            state.failure += 1;
+                            if state.failure >= MAX_FAILURE {
+                                warn!("[{}] Failed {} times, giving up", self.config.addr, state.failure);
+                                break;
+                            }
+                        }
                     }
 
                     // Forward media data if connected
-                    if let Some(ref mut w) = conn {
+                    if let Some(ref mut w) = state.conn {
                         if let Err(e) = write_rtmp_message(w, &msg, chunk_size).await {
-                            error!("Destination [{}] error: {}", self.config.addr, e);
-                            conn = None;
+                            error!("[{}] Write error: {}", self.config.addr, e);
+                            state.conn = None;
                         } else if msg.msg_type == 1 && msg.payload.len() >= 4 {
                             // Sync output chunk size if destination requests change (via SetChunkSize)
                             chunk_size = u32::from_be_bytes(msg.payload[..4].try_into().unwrap()) as usize;
@@ -121,7 +168,7 @@ impl Forwarder {
                     }
                 }
                 ForwardEvent::Shutdown => {
-                    if let Some(ref mut w) = conn {
+                    if let Some(ref mut w) = state.conn {
                         self.graceful_shutdown(w).await;
                     }
                     break;
@@ -157,7 +204,6 @@ impl Forwarder {
 
                     // Perform RTMP command sequence (Connect -> Publish)
                     if self.setup_protocol(&mut w, a, s).await.is_ok() {
-                        info!("Destination [{}] connected", addr);
                         return Some(w);
                     }
                 }
