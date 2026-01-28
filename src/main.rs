@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
     }
     if let Some(r) = cli.relay {
         let addr = if r.contains(':') { r } else { format!("{}:1935", r) };
-        app_config.relay_addr = Some(addr);
+        app_config.relay_addr = addr;
         app_config.relay_enabled = true;
     }
 
