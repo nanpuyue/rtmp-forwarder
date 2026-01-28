@@ -8,7 +8,7 @@ use crate::server::ForwarderConfig;
 pub struct AppConfig {
     pub listen_addr: String,
     pub forwarders: Vec<ForwarderConfig>,
-    pub relay_addr: Option<String>,
+    pub relay_addr: String,
     pub relay_enabled: bool,
     pub web_addr: String,
     pub log_level: String,
@@ -19,7 +19,7 @@ impl Default for AppConfig {
         Self {
             listen_addr: "127.0.0.1:1935".to_string(),
             forwarders: Vec::new(),
-            relay_addr: None,
+            relay_addr: String::new(),
             relay_enabled: false,
             web_addr: "0.0.0.0:8080".to_string(),
             log_level: "info".to_string(),
@@ -31,16 +31,13 @@ impl AppConfig {
     /// Convert relay configuration to forwarder list
     pub fn get_forwarders(&self) -> Vec<ForwarderConfig> {
         let mut forwarders = self.forwarders.clone();
-        if let Some(ref addr) = self.relay_addr {
-            if self.relay_enabled {
-                forwarders.insert(0, ForwarderConfig {
-                    addr: addr.clone(),
-                    app: None,
-                    stream: None,
-                    enabled: true,
-                });
-            }
-        }
+        // Always insert relay config to keep forwarder indices stable
+        forwarders.insert(0, ForwarderConfig {
+            addr: self.relay_addr.clone(),
+            app: None,
+            stream: None,
+            enabled: self.relay_enabled,
+        });
         forwarders
     }
 }
