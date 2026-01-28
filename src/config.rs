@@ -40,6 +40,13 @@ impl AppConfig {
         });
         forwarders
     }
+    
+    /// Save configuration to file
+    pub fn save(&mut self) -> Result<()> {
+        let content = serde_json::to_string_pretty(self)?;
+        fs::write("config.json", content).context("failed to write config.json")?;
+        Ok(())
+    }
 }
 
 pub type SharedConfig = Arc<RwLock<AppConfig>>;
@@ -49,10 +56,4 @@ pub fn load_config() -> AppConfig {
         Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
         Err(_) => AppConfig::default(),
     }
-}
-
-pub fn save_config(config: &AppConfig) -> Result<()> {
-    let content = serde_json::to_string_pretty(config)?;
-    fs::write("config.json", content).context("failed to write config.json")?;
-    Ok(())
 }
