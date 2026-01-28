@@ -27,6 +27,24 @@ impl Default for AppConfig {
     }
 }
 
+impl AppConfig {
+    /// Convert relay configuration to forwarder list
+    pub fn get_forwarders(&self) -> Vec<ForwarderConfig> {
+        let mut forwarders = self.forwarders.clone();
+        if let Some(ref addr) = self.relay_addr {
+            if self.relay_enabled {
+                forwarders.insert(0, ForwarderConfig {
+                    addr: addr.clone(),
+                    app: None,
+                    stream: None,
+                    enabled: true,
+                });
+            }
+        }
+        forwarders
+    }
+}
+
 pub type SharedConfig = Arc<RwLock<AppConfig>>;
 
 pub fn load_config() -> AppConfig {
