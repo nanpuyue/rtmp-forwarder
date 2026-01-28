@@ -26,6 +26,13 @@ pub async fn handle_client(
     stream_manager: Arc<StreamManager>,
 ) -> Result<()> {
     client.set_nodelay(true)?;
+    
+    // 获取原始目的地址
+    let orig_dest_addr = get_original_destination(&client).ok();
+    if orig_dest_addr.is_some() {
+        info!("Captured original destination address");
+    }
+    
     handshake_with_client(&mut client).await?;
 
     let client_id = CLIENT_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -106,7 +113,11 @@ pub async fn handle_client(
                             ).await.ok();
                         }
                         "createStream" => {
-                            match stream_manager.handle_create_stream(client_app.as_deref().unwrap_or("live"), client_id).await {
+                            match stream_manager.handle_create_stream(
+                                client_app.as_deref().unwrap_or("live"), 
+                                client_id,
+                                orig_dest_addr.clone()
+                            ).await {
                                 Ok(stream_id) => {
                                     crate::rtmp::send_rtmp_command(&mut client, 3, 0, u2c_chunk, "_result", tx_num, &[], &[crate::amf::Amf0::Number(stream_id as f64)]).await.ok();
                                 }
@@ -200,3 +211,29 @@ pub async fn handle_client(
     Ok(())
 }
 
+
+// 平台相关的原始目的地址获取
+#[cfg(target_os = "linux")]
+fn get_original_destination(socket: &TcpStream) -> Result<String> {
+    use std::os::unix::io::{AsRawFd, BorrowedFd};
+    use nix::sys::socket::{sockopt, SockaddrIn, SockaddrIn6};
+    
+    let fd = unsafe { BorrowedFd::borrow_raw(socket.as_raw_fd()) };
+    
+    // 尝试 IPv4
+    if let Ok(addr) = nix::sys::socket::getsockopt(&fd, sockopt::OriginalDst) {
+        return Ok(SockaddrIn::from(addr).to_string());
+    }
+    
+    // 尝试 IPv6
+    if let Ok(addr) = nix::sys::socket::getsockopt(&fd, sockopt::Ip6tOriginalDst) {
+        return Ok(SockaddrIn6::from(addr).to_string());
+     }
+    
+    Err(anyhow::anyhow!("Failed to get original destination"))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn get_original_destination(_socket: &TcpStream) -> Result<String> {
+    Err(anyhow::anyhow!("Platform not supported"))
+}
