@@ -61,7 +61,7 @@ where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
     Ok(())
 }
 
-pub async fn handshake_with_upstream<S>(upstream: &mut S) -> Result<()> 
+pub async fn handshake_with_server<S>(server: &mut S) -> Result<()> 
 where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
 {
     // RTMP Client Handshake
@@ -79,30 +79,30 @@ where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
     gen_random_buffer(&mut c1[8..]);
     c0c1.extend_from_slice(&c1);
 
-    upstream
+    server
         .write_all(&c0c1)
         .await
-        .context("write C0C1 to upstream")?;
-    debug!("sent C0+C1 to upstream");
+        .context("write C0C1 to server")?;
+    debug!("sent C0+C1 to server");
 
     // 2. Read S0 + S1 + S2
     let mut s0 = [0u8; 1];
-    upstream.read_exact(&mut s0).await.context("read S0")?;
+    server.read_exact(&mut s0).await.context("read S0")?;
 
     let mut s1 = vec![0u8; HANDSHAKE_SIZE];
-    upstream.read_exact(&mut s1).await.context("read S1")?;
+    server.read_exact(&mut s1).await.context("read S1")?;
 
     let mut s2 = vec![0u8; HANDSHAKE_SIZE];
-    upstream.read_exact(&mut s2).await.context("read S2")?;
-    debug!("read S0+S1+S2 from upstream");
+    server.read_exact(&mut s2).await.context("read S2")?;
+    debug!("read S0+S1+S2 from server");
 
     // 3. Write C2 (Echo of S1)
-    upstream
+    server
         .write_all(&s1)
         .await
-        .context("write C2 to upstream")?;
-    debug!("sent C2 to upstream");
+        .context("write C2 to server")?;
+    debug!("sent C2 to server");
 
-    debug!("handshake with upstream complete");
+    debug!("handshake with server complete");
     Ok(())
 }

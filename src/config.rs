@@ -2,12 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
 use std::fs;
 use anyhow::{Result, Context};
-use crate::server::UpstreamConfig;
+use crate::server::ForwarderConfig;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppConfig {
     pub listen_addr: String,
-    pub upstreams: Vec<UpstreamConfig>,
+    pub forwarders: Vec<ForwarderConfig>,
     pub relay_addr: Option<String>,
     pub relay_enabled: bool,
     pub web_addr: String,
@@ -18,7 +18,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             listen_addr: "127.0.0.1:1935".to_string(),
-            upstreams: Vec::new(),
+            forwarders: Vec::new(),
             relay_addr: None,
             relay_enabled: false,
             web_addr: "0.0.0.0:8080".to_string(),

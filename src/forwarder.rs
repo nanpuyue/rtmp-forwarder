@@ -15,8 +15,8 @@
 
 use crate::rtmp::{write_rtmp_message, RtmpMessage};
 use crate::amf::amf_command_name;
-use crate::handshake::handshake_with_upstream;
-use crate::server::UpstreamConfig;
+use crate::handshake::handshake_with_server;
+use crate::server::ForwarderConfig;
 use anyhow::Result;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -79,10 +79,10 @@ pub enum ForwardEvent {
     Shutdown,
 }
 
-/// Forwarder handles forwarding to a single upstream server.
+/// Forwarder handles forwarding to a single forwarder server.
 /// It runs in its own task to isolate client from destination network issues.
 pub struct Forwarder {
-    pub config: UpstreamConfig,
+    pub config: ForwarderConfig,
     pub rx: mpsc::Receiver<ForwardEvent>,
     pub snapshot: ProtocolSnapshot,
 }
@@ -141,12 +141,12 @@ impl Forwarder {
             let mut addr = self.config.addr.clone();
             if !addr.contains(':') { addr.push_str(":1935"); }
 
-            // Connect to upstream destination
+            // Connect to forwarder destination
             if let Ok(Ok(mut socket)) = tokio::time::timeout(std::time::Duration::from_secs(3), TcpStream::connect(&addr)).await {
                 socket.set_nodelay(true).ok();
                 
                 // Step 0: C0+C1 -> S0+S1+S2 -> C2
-                if handshake_with_upstream(&mut socket).await.is_ok() {
+                if handshake_with_server(&mut socket).await.is_ok() {
                     let (mut r, mut w) = socket.into_split();
                     
                     // Spawn a background task to drain anything sent from destination to us
