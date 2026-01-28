@@ -668,7 +668,7 @@
         function refreshUpstreams() {
             const container = document.getElementById('upstreams-container');
             container.innerHTML = "";
-            config.upstreams.forEach((u, i) => addUpstreamUI(u, i));
+            config.forwarders.forEach((u, i) => addUpstreamUI(u, i));
         }
 
         function addUpstreamUI(u, index) {
@@ -691,20 +691,20 @@
         }
 
         function addUpstream() {
-            config.upstreams.push({ addr: "", app: null, stream: null, enabled: false });
-            const newIndex = config.upstreams.length - 1;
+            config.forwarders.push({ addr: "", app: null, stream: null, enabled: false });
+            const newIndex = config.forwarders.length - 1;
             refreshUpstreams();
             editUpstream(newIndex);
         }
 
         function toggleUpstream(index) {
-            config.upstreams[index].enabled = document.getElementById(`up_enabled_${index}`).checked;
+            config.forwarders[index].enabled = document.getElementById(`up_enabled_${index}`).checked;
             save();
         }
 
         function editUpstream(index) {
             editingIndex = index;
-            const u = config.upstreams[index];
+            const u = config.forwarders[index];
             
             let base = u.addr || '';
             if (base && !base.startsWith("rtmp://")) base = "rtmp://" + base;
@@ -775,9 +775,9 @@
                 stream = streamVal;
             }
 
-            config.upstreams[editingIndex].addr = addr;
-            config.upstreams[editingIndex].app = app;
-            config.upstreams[editingIndex].stream = stream;
+            config.forwarders[editingIndex].addr = addr;
+            config.forwarders[editingIndex].app = app;
+            config.forwarders[editingIndex].stream = stream;
             
             closeModal();
             refreshUpstreams();
@@ -786,7 +786,7 @@
 
         function deleteUpstream() {
             if (editingIndex === -1) return;
-            config.upstreams.splice(editingIndex, 1);
+            config.forwarders.splice(editingIndex, 1);
             closeModal();
             refreshUpstreams();
             save();
@@ -798,7 +798,7 @@
                 log_level: config.log_level,
                 relay_addr: document.getElementById('relay_addr').value || null,
                 relay_enabled: document.getElementById('relay_enabled').checked,
-                upstreams: config.upstreams,
+                forwarders: config.forwarders,
                 web_addr: config.web_addr
             };
 

@@ -23,7 +23,7 @@ use tracing::{error, info};
 
 /* ================= args ================= */
 
-/// CLI: support `-l`/`--listen` and `-u`/`--upstream`.
+/// CLI: support `-l`/`--listen` and `-d`/`--dest`.
 #[derive(Parser, Debug)]
 #[command(about = "RTMP forwarder proxy")]
 struct Cli {
@@ -31,9 +31,9 @@ struct Cli {
     #[arg(short = 'l', long = "listen")]
     listen: Option<String>,
 
-    /// Upstream RTMP URL(s) (rtmp://host[:port]/app/stream)
-    #[arg(short = 'u', long = "upstream")]
-    upstream: Vec<String>,
+    /// Destination RTMP server URL(s) (rtmp://host[:port]/app/stream)
+    #[arg(short = 'd', long = "dest")]
+    dest: Vec<String>,
 
     /// Relay host:port for original push (no rewrite)
     #[arg(short = 'r', long = "relay")]
@@ -86,10 +86,10 @@ async fn main() -> Result<()> {
     if let Some(l) = cli.listen { app_config.listen_addr = l; }
     if let Some(log) = cli.log { app_config.log_level = log; }
     if let Some(w) = cli.web { app_config.web_addr = w; }
-    if !cli.upstream.is_empty() {
-        app_config.upstreams = cli.upstream.iter().filter_map(|u| {
+    if !cli.dest.is_empty() {
+        app_config.forwarders = cli.dest.iter().filter_map(|u| {
             let (addr, app, stream) = parse_rtmp_url(u).ok()?;
-            Some(server::UpstreamConfig { addr, app: Some(app), stream: Some(stream), enabled: true })
+            Some(server::ForwarderConfig { addr, app: Some(app), stream: Some(stream), enabled: true })
         }).collect();
     }
     if let Some(r) = cli.relay {
@@ -109,13 +109,13 @@ async fn main() -> Result<()> {
     let stream_manager = Arc::new(StreamManager::new());
     
     // 4. Create forwarder manager
-    let initial_upstreams = {
+    let initial_forwarders = {
         let cfg = shared_config.read().unwrap();
-        cfg.upstreams.clone()
+        cfg.forwarders.clone()
     };
     let (forwarder_mgr, forwarder_cmd_tx) = ForwarderManager::new(
         stream_manager.clone(),
-        initial_upstreams,
+        initial_forwarders,
     );
     let forwarder_handle = tokio::spawn(forwarder_mgr.run());
     

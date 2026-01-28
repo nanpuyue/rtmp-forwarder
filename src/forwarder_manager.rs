@@ -2,26 +2,26 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use crate::stream_manager::{StreamManager, StreamMessage, StreamEvent, StreamSnapshot};
 use crate::forwarder::{ForwardEvent, Forwarder};
-use crate::server::UpstreamConfig;
+use crate::server::ForwarderConfig;
 use crate::rtmp::RtmpMessage;
 use tracing::info;
 
 pub enum ForwarderCommand {
-    UpdateConfig(Vec<UpstreamConfig>),
+    UpdateConfig(Vec<ForwarderConfig>),
     Shutdown,
 }
 
 pub struct ForwarderManager {
     stream_manager: Arc<StreamManager>,
-    config: Arc<RwLock<Vec<UpstreamConfig>>>,
+    config: Arc<RwLock<Vec<ForwarderConfig>>>,
     command_rx: mpsc::UnboundedReceiver<ForwarderCommand>,
-    running_configs: Arc<RwLock<Vec<UpstreamConfig>>>,
+    running_configs: Arc<RwLock<Vec<ForwarderConfig>>>,
 }
 
 impl ForwarderManager {
     pub fn new(
         stream_manager: Arc<StreamManager>,
-        initial_config: Vec<UpstreamConfig>,
+        initial_config: Vec<ForwarderConfig>,
     ) -> (Self, mpsc::UnboundedSender<ForwarderCommand>) {
         let (tx, rx) = mpsc::unbounded_channel();
         (Self {
@@ -70,7 +70,7 @@ impl ForwarderManager {
                 Some(cmd) = self.command_rx.recv() => {
                     match cmd {
                         ForwarderCommand::UpdateConfig(new_config) => {
-                            info!("Received config update with {} upstreams", new_config.len());
+                            info!("Received config update with {} forwarders", new_config.len());
                             *self.config.write().await = new_config;
                             
                             if let Some(snapshot) = self.stream_manager.get_stream_snapshot().await {
@@ -95,13 +95,13 @@ impl ForwarderManager {
     async fn start_forwarder(
         &self,
         index: usize,
-        upstream: &UpstreamConfig,
+        forwarder: &ForwarderConfig,
         snapshot: &StreamSnapshot,
     ) -> mpsc::Sender<ForwardEvent> {
         let (tx, rx) = mpsc::channel(128);
         
         let actor = Forwarder {
-            config: upstream.clone(),
+            config: forwarder.clone(),
             rx,
             snapshot: crate::forwarder::ProtocolSnapshot {
                 metadata: snapshot.metadata.as_ref().map(|b| crate::rtmp::RtmpMessage {
@@ -131,8 +131,8 @@ impl ForwarderManager {
         };
         
         tokio::spawn(actor.run());
-        info!("Started forwarder #{}: {}/{}/{}", index, upstream.addr, 
-            upstream.app.as_deref().unwrap_or(""), upstream.stream.as_deref().unwrap_or(""));
+        info!("Started forwarder #{}: {}/{}/{}", index, forwarder.addr, 
+            forwarder.app.as_deref().unwrap_or(""), forwarder.stream.as_deref().unwrap_or(""));
         tx
     }
     

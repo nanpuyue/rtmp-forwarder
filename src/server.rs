@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 static CLIENT_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UpstreamConfig {
+pub struct ForwarderConfig {
     pub addr: String,
     pub app: Option<String>,
     pub stream: Option<String>,
