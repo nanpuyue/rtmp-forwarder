@@ -145,6 +145,9 @@ impl StreamManager {
                     video_seq_hdr: None,
                     audio_seq_hdr: None,
                 });
+                drop(stream);
+                
+                self.message_tx.send(StreamMessage::StateChanged(StreamEvent::StreamCreated)).ok();
                 Ok(1)
             }
             _ => unreachable!(),
