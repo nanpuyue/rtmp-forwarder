@@ -106,8 +106,7 @@ async fn main() -> Result<()> {
     let shared_config = Arc::new(RwLock::new(app_config));
 
     // 3. Create stream manager
-    let (stream_manager, _event_rx) = StreamManager::new();
-    let stream_manager = Arc::new(stream_manager);
+    let stream_manager = Arc::new(StreamManager::new());
     
     // 4. Create forwarder manager
     let initial_upstreams = {
