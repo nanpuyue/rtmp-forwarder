@@ -520,6 +520,48 @@
     <script>
         let player = null;
         let isPlaying = false;
+        let ws = null;
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/stream-status`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+            };
+            
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('Stream status:', data.status);
+                    
+                    if (data.status === 'publishing') {
+                        if (!isPlaying) {
+                            console.log('Stream started, auto-playing...');
+                            startStream();
+                        }
+                    } else if (data.status === 'idle') {
+                        if (isPlaying) {
+                            console.log('Stream stopped, stopping playback...');
+                            stopStream();
+                        }
+                    }
+                } catch (e) {
+                    console.error('WebSocket message error:', e);
+                }
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+            
+            ws.onclose = () => {
+                console.log('WebSocket disconnected, reconnecting in 3s...');
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
 
         function startStream() {
             if (isPlaying) return;
@@ -817,9 +859,7 @@
         }
 
         load();
-        setTimeout(() => {
-            startStream();
-        }, 1000);
+        connectWebSocket();
     </script>
 </body>
 
