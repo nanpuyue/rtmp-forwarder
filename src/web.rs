@@ -7,7 +7,7 @@ use axum::{
     body::Body,
 };
 use std::net::SocketAddr;
-use crate::config::{SharedConfig, AppConfig, save_config};
+use crate::config::{SharedConfig, AppConfig};
 use crate::flv_manager::FlvManager;
 use crate::forwarder_manager::ForwarderCommand;
 use tokio::sync::mpsc;
@@ -17,6 +17,7 @@ use tokio_stream::StreamExt;
 use tracing::info;
 use tower_http::cors::CorsLayer;
 use rust_embed::RustEmbed;
+use std::sync::Arc;
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
@@ -24,7 +25,7 @@ struct Assets;
 
 pub async fn start_web_server(
     config: SharedConfig,
-    flv_manager: std::sync::Arc<FlvManager>,
+    flv_manager: Arc<FlvManager>,
     forwarder_cmd_tx: mpsc::UnboundedSender<ForwarderCommand>,
 ) {
     let addr_str = config.read().unwrap().web_addr.clone();
@@ -87,13 +88,14 @@ async fn update_config(
     Extension(forwarder_cmd_tx): Extension<mpsc::UnboundedSender<ForwarderCommand>>,
     Json(new_config): Json<AppConfig>,
 ) -> Json<bool> {
-    let mut c = config.write().unwrap();
-    *c = new_config.clone();
-    
-    let success = save_config(&c).is_ok();
-    
+    let forwarders = new_config.get_forwarders();
+    let success= {
+        let mut c = config.write().unwrap();
+        *c = new_config;
+        c.save().is_ok()
+    };
+
     if success {
-        let forwarders = new_config.get_forwarders();
         info!("Config saved, notifying ForwarderManager with {} forwarders", forwarders.len());
         forwarder_cmd_tx.send(ForwarderCommand::UpdateConfig(forwarders)).ok();
     }
@@ -103,7 +105,7 @@ async fn update_config(
 
 pub async fn handle_flv_stream(
     Path(_stream_id): Path<String>,
-    Extension(manager): Extension<std::sync::Arc<FlvManager>>,
+    Extension(manager): Extension<Arc<FlvManager>>,
 ) -> impl IntoResponse {
     tracing::info!("HTTP-FLV: Request for stream");
     

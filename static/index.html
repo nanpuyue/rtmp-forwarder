@@ -796,7 +796,7 @@
             const updated = {
                 listen_addr: config.listen_addr,
                 log_level: config.log_level,
-                relay_addr: document.getElementById('relay_addr').value || null,
+                relay_addr: document.getElementById('relay_addr').value || "",
                 relay_enabled: document.getElementById('relay_enabled').checked,
                 forwarders: config.forwarders,
                 web_addr: config.web_addr
