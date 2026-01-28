@@ -209,7 +209,7 @@ impl Forwarder {
     }
     
     async fn graceful_shutdown(&self, w: &mut tokio::net::tcp::OwnedWriteHalf) {
-        if let (Some(app), Some(stream)) = (
+        if let (Some(_app), Some(stream)) = (
             self.config.app.as_deref().or(self.snapshot.client_app.as_deref()),
             self.config.stream.as_deref().or(self.snapshot.client_stream.as_deref())
         ) {
