@@ -1,21 +1,22 @@
 use std::sync::Arc;
-use std::collections::HashMap;
-use tokio::sync::{mpsc, RwLock};
-use bytes::Bytes;
+use tokio::sync::broadcast;
+use bytes::{Bytes, BytesMut};
 use crate::stream_manager::{StreamManager, StreamMessage};
 use crate::rtmp::RtmpMessage;
 use tracing::info;
 
 pub struct FlvManager {
     stream_manager: Arc<StreamManager>,
-    subscribers: Arc<RwLock<HashMap<String, Vec<mpsc::Sender<Bytes>>>>>,
+    // 直接使用广播通道，无需HashMap和锁
+    broadcast_tx: broadcast::Sender<Bytes>,
 }
 
 impl FlvManager {
     pub fn new(stream_manager: Arc<StreamManager>) -> Self {
+        let (broadcast_tx, _) = broadcast::channel(1024);
         Self {
             stream_manager,
-            subscribers: Arc::new(RwLock::new(HashMap::new())),
+            broadcast_tx,
         }
     }
     
@@ -34,40 +35,39 @@ impl FlvManager {
         info!("FlvManager stopped");
     }
     
-    async fn broadcast_flv(&self, stream_name: &str, data: Bytes) {
-        let mut subs = self.subscribers.write().await;
-        if let Some(clients) = subs.get_mut(stream_name) {
-            clients.retain(|tx| tx.try_send(data.clone()).is_ok());
-        }
+    async fn broadcast_flv(&self, _stream_name: &str, data: Bytes) {
+        // 直接使用广播通道发送数据
+        let _ = self.broadcast_tx.send(data);
     }
     
-    pub async fn subscribe_flv(&self, stream_name: &str) -> mpsc::Receiver<Bytes> {
-        let (tx, rx) = mpsc::channel(64);
+    pub async fn subscribe_flv(&self, _stream_name: &str) -> (broadcast::Receiver<Bytes>, Bytes) {
+        // 使用 BytesMut 进行高效拼接
+        let mut header_data = BytesMut::new();
         
+        // 添加 FLV 文件头
+        if let Some(header) = self.create_flv_header() {
+            header_data.extend_from_slice(&header);
+        }
+        
+        // 添加序列头信息
         if let Some(snapshot) = self.stream_manager.get_stream_snapshot().await {
-            if let Some(header) = self.create_flv_header() {
-                tx.try_send(header).ok();
-            }
-            
+            // 添加视频序列头
             if let Some(ref video_hdr) = snapshot.video_seq_hdr {
                 if let Some(flv_tag) = self.create_flv_video_tag(video_hdr, 0) {
-                    tx.try_send(flv_tag).ok();
+                    header_data.extend_from_slice(&flv_tag);
                 }
             }
             
+            // 添加音频序列头
             if let Some(ref audio_hdr) = snapshot.audio_seq_hdr {
                 if let Some(flv_tag) = self.create_flv_audio_tag(audio_hdr, 0) {
-                    tx.try_send(flv_tag).ok();
+                    header_data.extend_from_slice(&flv_tag);
                 }
             }
         }
         
-        self.subscribers.write().await
-            .entry(stream_name.to_string())
-            .or_default()
-            .push(tx);
-        
-        rx
+        // 返回广播通道订阅者和完整的头部数据
+        (self.broadcast_tx.subscribe(), header_data.freeze())
     }
     
     fn rtmp_to_flv(&self, msg: &RtmpMessage) -> Option<Bytes> {
