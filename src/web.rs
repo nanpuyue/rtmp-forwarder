@@ -113,15 +113,15 @@ pub async fn handle_flv_stream(
 ) -> impl IntoResponse {
     tracing::info!("HTTP-FLV: Request for stream");
     
-    // 获取广播通道订阅者和头部信息
+    // 获取广播通道订阅者和头部数据
     let (rx, header_data) = manager.subscribe_flv("stream").await;
-    
-    // 创建一个流，先发送头部信息，然后是广播数据
+    // 创建一个流，先发送头部信息
     let header_stream = tokio_stream::iter(vec![Ok::<Bytes, std::convert::Infallible>(header_data)]);
-    let data_stream = BroadcastStream::new(rx).map(|data| Ok::<Bytes, std::convert::Infallible>(data.unwrap()));
-    let stream = header_stream.chain(data_stream);
+    // 创建剩余数据流
+    let remaining_stream =BroadcastStream::new(rx).map(|data| Ok::<Bytes, std::convert::Infallible>(data.unwrap()));
+    let stream = header_stream.chain(remaining_stream);
 
-    Response::builder()
+    Response::builder()                              
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "video/x-flv")
         .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")

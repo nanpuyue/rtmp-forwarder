@@ -1,6 +1,8 @@
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use bytes::{Bytes, BytesMut};
+use tokio::time::timeout;
 use crate::stream_manager::{StreamManager, StreamMessage};
 use crate::rtmp::RtmpMessage;
 use tracing::info;
@@ -65,10 +67,41 @@ impl FlvManager {
                 }
             }
         }
-        
-        // 返回广播通道订阅者和完整的头部数据
-        (self.broadcast_tx.subscribe(), header_data.freeze())
+
+        fn is_flv_keyframe(flv_data: &Bytes) -> bool {
+            // FLV tag header格式：
+            // [1字节tag类型][3字节数据长度][3字节时间戳][1字节时间戳扩展][3字节流ID][payload...]
+            // payload起始位置固定为第11字节
+            
+            // 检查数据长度足够且为视频包 (tag_type = 9)
+            // payload[0] = frame_type(4位) + codec_id(4位)
+            // 0x17 = 0001 0111, 前4位是frame_type, 后4位是codec_id
+            flv_data.len() >= 12 && flv_data[0] == 9 && flv_data[11] == 0x17
+        }
+
+        let mut rx = self.broadcast_tx.subscribe();
+        // 过滤出第一个关键帧并追加到头
+        let first_keyframe = async {
+            loop {
+                match rx.recv().await {
+                    Ok(data) => {
+                        if is_flv_keyframe(&data) {
+                            break data;
+                        }
+                    }
+                    Err(_) => {
+                        break Bytes::new();
+                    }
+                }
+            }
+        };
+        let first_keyframe = timeout(Duration::from_secs(4), first_keyframe).await.unwrap_or_default();
+        header_data.extend_from_slice(&first_keyframe);
+
+        // 返回广播通道订阅者和带首包的头部数据
+        (rx, header_data.freeze())
     }
+    
     
     fn rtmp_to_flv(&self, msg: &RtmpMessage) -> Option<Bytes> {
         match msg.msg_type {
