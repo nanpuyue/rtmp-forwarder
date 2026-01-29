@@ -641,10 +641,10 @@
         }
 
         function addUpstream() {
-            config.forwarders.push({ addr: "", app: null, stream: null, enabled: false });
-            const newIndex = config.forwarders.length - 1;
-            refreshUpstreams();
-            editUpstream(newIndex);
+            editingIndex = -1; // 标记为新建模式
+            document.getElementById('modal_addr').value = "";
+            document.getElementById('modal_stream').value = "";
+            document.getElementById('editModal').style.display = 'block';
         }
 
         function toggleUpstream(index) {
@@ -706,8 +706,6 @@
         }
 
         function saveUpstream() {
-            if (editingIndex === -1) return;
-            
             const addrVal = document.getElementById('modal_addr').value;
             const streamVal = document.getElementById('modal_stream').value;
             
@@ -725,9 +723,15 @@
                 stream = streamVal;
             }
 
-            config.forwarders[editingIndex].addr = addr;
-            config.forwarders[editingIndex].app = app;
-            config.forwarders[editingIndex].stream = stream;
+            if (editingIndex === -1) {
+                // 新建模式：添加到配置中
+                config.forwarders.push({ addr, app, stream, enabled: false });
+            } else {
+                // 编辑模式：更新现有配置
+                config.forwarders[editingIndex].addr = addr;
+                config.forwarders[editingIndex].app = app;
+                config.forwarders[editingIndex].stream = stream;
+            }
             
             closeModal();
             refreshUpstreams();
@@ -735,7 +739,13 @@
         }
 
         function deleteUpstream() {
-            if (editingIndex === -1) return;
+            if (editingIndex === -1) {
+                // 新建模式：直接关闭，不保存
+                closeModal();
+                return;
+            }
+            
+            // 编辑模式：删除现有配置
             config.forwarders.splice(editingIndex, 1);
             closeModal();
             refreshUpstreams();
