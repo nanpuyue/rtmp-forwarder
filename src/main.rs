@@ -11,6 +11,7 @@ mod stream_manager;
 mod forwarder_manager;
 mod flv_manager;
 
+use crate::config::AppConfig;
 use crate::stream_manager::StreamManager;
 use crate::forwarder_manager::ForwarderManager;
 use crate::flv_manager::FlvManager;
@@ -46,6 +47,10 @@ struct Cli {
     /// Web dashboard address (default 0.0.0.0:8080)
     #[arg(short = 'w', long = "web")]
     web: Option<String>,
+
+    /// Sets a custom config file
+    #[arg(short = 'c', long = "config", value_name = "FILE")]
+    config: Option<String>,
 }
 
 fn parse_rtmp_url(url: &str) -> Result<(String, String, String)> {
@@ -78,9 +83,8 @@ fn parse_rtmp_url(url: &str) -> Result<(String, String, String)> {
 async fn main() -> Result<()> {
     // Parse CLI using clap
     let cli = Cli::parse();
-
-    // 1. Load persistent config
-    let mut app_config = config::load_config();
+    let config_path = cli.config.as_deref().unwrap_or("config.json");
+    let mut app_config = AppConfig::load(config_path)?;
 
     // 2. Overlays CLI arguments if provided
     if let Some(l) = cli.listen { app_config.listen_addr = l; }
