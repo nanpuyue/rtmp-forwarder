@@ -47,13 +47,11 @@ impl AppConfig {
         fs::write("config.json", content).context("failed to write config.json")?;
         Ok(())
     }
+
+    pub fn load(path: &str) -> Result<AppConfig> {
+        let content = fs::read_to_string(path).context(format!("Failed to read config file: {}", path))?;
+        serde_json::from_str(&content).context("Failed to parse config JSON")
+    }
 }
 
 pub type SharedConfig = Arc<RwLock<AppConfig>>;
-
-pub fn load_config() -> AppConfig {
-    match fs::read_to_string("config.json") {
-        Ok(content) => serde_json::from_str(&content).unwrap_or_default(),
-        Err(_) => AppConfig::default(),
-    }
-}
