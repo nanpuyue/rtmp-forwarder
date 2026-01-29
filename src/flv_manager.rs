@@ -92,24 +92,20 @@ impl FlvManager {
             }
         }
 
-        fn is_flv_keyframe(flv_data: &Bytes) -> bool {
-            // FLV tag header格式：
-            // [1字节tag类型][3字节数据长度][3字节时间戳][1字节时间戳扩展][3字节流ID][payload...]
-            // payload起始位置固定为第11字节
-            
-            // 检查数据长度足够且为视频包 (tag_type = 9)
-            // payload[0] = frame_type(4位) + codec_id(4位)
-            // 0x17 = 0001 0111, 前4位是frame_type, 后4位是codec_id
-            flv_data.len() >= 12 && flv_data[0] == 9 && flv_data[11] == 0x17
-        }
-
         let mut rx = self.broadcast_tx.subscribe();
         // 过滤出第一个关键帧并追加到头
         let first_keyframe = async {
             loop {
                 match rx.recv().await {
                     Ok(data) => {
-                        if is_flv_keyframe(&data) {
+                        // FLV tag header格式：
+                        // [1字节tag类型][3字节数据长度][3字节时间戳][1字节时间戳扩展][3字节流ID][payload...]
+                        // payload起始位置固定为第11字节
+                        
+                        // 检查数据长度足够且为视频包 (tag_type = 9)
+                        // payload[0] = frame_type(4位) + codec_id(4位)
+                        // 0x17 = 0001 0111, 前4位是frame_type, 后4位是codec_id
+                        if data.len() >= 12 && data[0] == 9 && data[11] == 0x17 {
                             break data;
                         }
                     }
