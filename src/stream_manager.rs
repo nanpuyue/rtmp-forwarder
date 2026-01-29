@@ -133,11 +133,13 @@ impl StreamManager {
     pub async fn handle_create_stream(&self, app_name: &str, _client_id: u32, orig_dest_addr: Option<String>) -> Result<u32, StreamError> {
         let mut stream = self.default_stream.write().await;
         
-        match stream.as_ref() {
+        match stream.as_mut() {
             Some(s) if s.state == StreamState::Publishing => {
                 Err(StreamError::AlreadyPublishing)
             }
             Some(s) if s.state == StreamState::Idle || s.state == StreamState::Closed => {
+                // 更新已存在流的 orig_dest_addr
+                s.orig_dest_addr = orig_dest_addr;
                 Ok(s.stream_id)
             }
             None => {
