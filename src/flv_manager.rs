@@ -51,8 +51,32 @@ impl FlvManager {
             header_data.extend_from_slice(&header);
         }
         
+        // 先获取一次 snapshot 检查是否有两个序列头
+        let mut snapshot = self.stream_manager.get_stream_snapshot().await;
+
+        // 如果没有两个序列头，订阅 stream_manager 并等待
+        if snapshot.as_ref().map_or(false, |x|!x.has_av_seq_hdr()){
+            let timeout_duration = Duration::from_secs(4);
+            let start_time = std::time::Instant::now();
+            let mut msg_rx = self.stream_manager.subscribe();
+
+            while msg_rx.recv().await.is_ok() {
+                // 丢弃消息，直接检查 snapshot
+                snapshot = self.stream_manager.get_stream_snapshot().await;
+                if let Some(x) = &snapshot {
+                    if x.has_av_seq_hdr() {
+                        break;
+                    }
+                }
+                // 检查是否超时
+                if start_time.elapsed() >= timeout_duration {
+                    break;
+                }
+            }
+        }
+
         // 添加序列头信息
-        if let Some(snapshot) = self.stream_manager.get_stream_snapshot().await {
+        if let Some(snapshot) = snapshot {
             // 添加视频序列头
             if let Some(ref video_hdr) = snapshot.video_seq_hdr {
                 if let Some(flv_tag) = self.create_flv_video_tag(video_hdr, 0) {
