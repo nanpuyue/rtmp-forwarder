@@ -13,7 +13,7 @@ use crate::forwarder_manager::ForwarderCommand;
 use crate::stream_manager::{StreamManager, StreamMessage, StreamEvent};
 use tokio::sync::mpsc;
 use bytes::Bytes;
-use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tracing::info;
 use tower_http::cors::CorsLayer;
@@ -113,9 +113,13 @@ pub async fn handle_flv_stream(
 ) -> impl IntoResponse {
     tracing::info!("HTTP-FLV: Request for stream");
     
-    let rx = manager.subscribe_flv("stream").await;
+    // 获取广播通道订阅者和头部信息
+    let (rx, header_data) = manager.subscribe_flv("stream").await;
     
-    let stream = ReceiverStream::new(rx).map(|data| Ok::<Bytes, std::convert::Infallible>(data));
+    // 创建一个流，先发送头部信息，然后是广播数据
+    let header_stream = tokio_stream::iter(vec![Ok::<Bytes, std::convert::Infallible>(header_data)]);
+    let data_stream = BroadcastStream::new(rx).map(|data| Ok::<Bytes, std::convert::Infallible>(data.unwrap()));
+    let stream = header_stream.chain(data_stream);
 
     Response::builder()
         .status(StatusCode::OK)
