@@ -3,7 +3,7 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use bytes::{Bytes, BytesMut};
 use tokio::time::timeout;
-use crate::stream_manager::{StreamManager, StreamMessage};
+use crate::stream_manager::{StreamManager, StreamMessage, StreamSnapshot};
 use crate::rtmp::RtmpMessage;
 use tracing::info;
 
@@ -43,54 +43,40 @@ impl FlvManager {
     }
     
     pub async fn subscribe_flv(&self, _stream_name: &str) -> (broadcast::Receiver<Bytes>, Bytes) {
-        // 使用 BytesMut 进行高效拼接
-        let mut header_data = BytesMut::new();
-        
-        // 添加 FLV 文件头
-        if let Some(header) = self.create_flv_header() {
-            header_data.extend_from_slice(&header);
-        }
-        
-        // 先获取一次 snapshot 检查是否有两个序列头
+        // 先获取一次快照检查
         let mut snapshot = self.stream_manager.get_stream_snapshot().await;
-
-        // 如果没有两个序列头，订阅 stream_manager 并等待
-        if snapshot.as_ref().map_or(false, |x|!x.has_av_seq_hdr()){
+        
+        // 如果没有快照或没有双序列头，订阅 stream_manager 等待第一个流数据
+        let mut msg_rx = self.stream_manager.subscribe();
+        if snapshot.is_none() || !snapshot.as_ref().unwrap().has_av_seq_hdr() {
+            // 等待第一个流数据（音频或视频）
             let timeout_duration = Duration::from_secs(4);
             let start_time = std::time::Instant::now();
-            let mut msg_rx = self.stream_manager.subscribe();
-
-            while msg_rx.recv().await.is_ok() {
-                // 丢弃消息，直接检查 snapshot
-                snapshot = self.stream_manager.get_stream_snapshot().await;
-                if let Some(x) = &snapshot {
-                    if x.has_av_seq_hdr() {
-                        break;
-                    }
-                }
-                // 检查是否超时
-                if start_time.elapsed() >= timeout_duration {
-                    break;
-                }
-            }
-        }
-
-        // 添加序列头信息
-        if let Some(snapshot) = snapshot {
-            // 添加视频序列头
-            if let Some(ref video_hdr) = snapshot.video_seq_hdr {
-                if let Some(flv_tag) = self.create_flv_video_tag(video_hdr, 0) {
-                    header_data.extend_from_slice(&flv_tag);
-                }
-            }
             
-            // 添加音频序列头
-            if let Some(ref audio_hdr) = snapshot.audio_seq_hdr {
-                if let Some(flv_tag) = self.create_flv_audio_tag(audio_hdr, 0) {
-                    header_data.extend_from_slice(&flv_tag);
+            while start_time.elapsed() < timeout_duration {
+                match msg_rx.recv().await {
+                    Ok(stream_msg) => {
+                        if let StreamMessage::RtmpMessage(msg) = stream_msg {
+                            // 检查是否为音频或视频的原始数据（不包含序列头）
+                            // 音频: msg_type=8, payload[1] 是 AACPacketType (1=原始数据)
+                            // 视频: msg_type=9, payload[1] 是 AVCPacketType (1=原始数据)
+                            let is_raw_data = (msg.msg_type == 8 || msg.msg_type == 9) 
+                                && msg.payload.len() >= 2 
+                                && msg.payload[1] == 1;
+                            if is_raw_data {
+                                // 收到第一个媒体数据，说明RTMP流已经发送过序列头
+                                snapshot = self.stream_manager.get_stream_snapshot().await;
+                                break;
+                            }
+                        }
+                    }
+                    Err(_) => break,
                 }
             }
         }
+
+        // 使用快照创建FLV头部，包含序列头
+        let mut header_data = self.create_flv_header(snapshot.as_ref()).await;
 
         let mut rx = self.broadcast_tx.subscribe();
         // 过滤出第一个关键帧并追加到头
@@ -132,14 +118,46 @@ impl FlvManager {
         }
     }
     
-    fn create_flv_header(&self) -> Option<Bytes> {
+    async fn create_flv_header(&self, snapshot: Option<&StreamSnapshot>) -> BytesMut {
+        let mut header_data = BytesMut::new();
+        
+        // 添加 FLV 文件头
         let mut buf = Vec::with_capacity(13);
         buf.extend_from_slice(b"FLV");
+        
         buf.push(1);
-        buf.push(5);
+        // 根据Adobe FLV规范：
+        // bit 0 = TypeFlagsVideo (hasVideo)
+        // bit 2 = TypeFlagsAudio (hasAudio)
+        // 默认假设音视频都有
+        buf.push(5); // bit 0 (1) + bit 2 (4) = 5
         buf.extend_from_slice(&9u32.to_be_bytes());
         buf.extend_from_slice(&0u32.to_be_bytes());
-        Some(Bytes::from(buf))
+        
+        header_data.extend_from_slice(&buf);
+        
+        // 根据快照添加序列头
+        if let Some(snapshot) = snapshot {
+            // 添加视频序列头（假设一定有视频序列头）
+            if let Some(ref video_hdr) = snapshot.video_seq_hdr {
+                if let Some(flv_tag) = self.create_flv_video_tag(video_hdr, 0) {
+                    header_data.extend_from_slice(&flv_tag);
+                }
+                
+                // 只有在有视频头的情况下才处理音频头或设置音频标记位
+                if let Some(ref audio_hdr) = snapshot.audio_seq_hdr {
+                    // 有视频头和音频头
+                    if let Some(flv_tag) = self.create_flv_audio_tag(audio_hdr, 0) {
+                        header_data.extend_from_slice(&flv_tag);
+                    }
+                } else {
+                    // 有视频头但无音频头，将音频标记位设为0，只保留视频标记 (bit 0 = 1)
+                    header_data[4] = 1;
+                }
+            }
+        }
+        
+        header_data
     }
     
     fn create_flv_audio_tag(&self, data: &Bytes, timestamp: u32) -> Option<Bytes> {
