@@ -4,6 +4,16 @@ use std::fs;
 use anyhow::{Result, Context};
 use crate::server::ForwarderConfig;
 
+pub type SharedConfig = Arc<RwLock<AppConfig>>;
+
+/// Web配置子集，仅包含允许通过Web界面配置的字段
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct WebConfig {
+    pub forwarders: Vec<ForwarderConfig>,
+    pub relay_addr: String,
+    pub relay_enabled: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppConfig {
     pub listen_addr: String,
@@ -12,6 +22,12 @@ pub struct AppConfig {
     pub relay_enabled: bool,
     pub web_addr: String,
     pub log_level: String,
+    #[serde(skip)]
+    pub config_path: String,
+}
+
+pub trait GetForwarders {
+    fn get_forwarders(&self) -> Vec<ForwarderConfig>;
 }
 
 impl Default for AppConfig {
@@ -23,13 +39,47 @@ impl Default for AppConfig {
             relay_enabled: false,
             web_addr: "0.0.0.0:8080".to_string(),
             log_level: "info".to_string(),
+            config_path: "config.json".to_string(),
+        }
+    }
+}
+
+impl From<&AppConfig> for WebConfig {
+    fn from(config: &AppConfig) -> Self {
+        Self {
+            forwarders: config.forwarders.clone(),
+            relay_addr: config.relay_addr.clone(),
+            relay_enabled: config.relay_enabled,
         }
     }
 }
 
 impl AppConfig {
-    /// Convert relay configuration to forwarder list
-    pub fn get_forwarders(&self) -> Vec<ForwarderConfig> {
+    /// Save configuration to file
+    pub fn save(&mut self) -> Result<()> {
+        let content = serde_json::to_string_pretty(self)?;
+        fs::write(&self.config_path, content).context(format!("failed to write config file: {}", self.config_path))?;
+        Ok(())
+    }
+
+    /// Update configuration from WebConfig, preserving config_path
+    pub fn update_from_web_config(&mut self, web_config: &WebConfig) {
+        self.forwarders = web_config.forwarders.clone();
+        self.relay_addr = web_config.relay_addr.clone();
+        self.relay_enabled = web_config.relay_enabled;
+        // 其他字段保持不变，特别是 config_path
+    }
+
+    pub fn load(path: &str) -> Result<AppConfig> {
+        let content = fs::read_to_string(path).context(format!("Failed to read config file: {}", path))?;
+        let mut config: AppConfig = serde_json::from_str(&content).context("Failed to parse config JSON")?;
+        config.config_path = path.to_string();
+        Ok(config)
+    }
+}
+
+impl GetForwarders for WebConfig {
+    fn get_forwarders(&self) -> Vec<ForwarderConfig> {
         let mut forwarders = self.forwarders.clone();
         // Always insert relay config to keep forwarder indices stable
         forwarders.insert(0, ForwarderConfig {
@@ -40,18 +90,10 @@ impl AppConfig {
         });
         forwarders
     }
-    
-    /// Save configuration to file
-    pub fn save(&mut self) -> Result<()> {
-        let content = serde_json::to_string_pretty(self)?;
-        fs::write("config.json", content).context("failed to write config.json")?;
-        Ok(())
-    }
-
-    pub fn load(path: &str) -> Result<AppConfig> {
-        let content = fs::read_to_string(path).context(format!("Failed to read config file: {}", path))?;
-        serde_json::from_str(&content).context("Failed to parse config JSON")
-    }
 }
 
-pub type SharedConfig = Arc<RwLock<AppConfig>>;
+impl GetForwarders for AppConfig {
+    fn get_forwarders(&self) -> Vec<ForwarderConfig> {
+        WebConfig::from(self).get_forwarders()
+    }
+}

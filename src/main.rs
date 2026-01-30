@@ -11,7 +11,7 @@ mod stream_manager;
 mod forwarder_manager;
 mod flv_manager;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, GetForwarders};
 use crate::stream_manager::StreamManager;
 use crate::forwarder_manager::ForwarderManager;
 use crate::flv_manager::FlvManager;
