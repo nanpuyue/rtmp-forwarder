@@ -14,98 +14,131 @@ pub struct RtmpMessage {
 
 #[derive(Clone)]
 pub struct RtmpHeader {
-    pub timestamp: u32,
+    pub ts_raw: u32,
     pub msg_len: usize,
     pub msg_type: u8,
     pub stream_id: u32,
 }
 
-pub async fn read_rtmp_message<S>(
+/// 读取单个 RTMP chunk
+/// payload 为上一条消息未完成的 buffer，如果读取完一条消息就 take 出来返回 Some(Bytes)
+pub async fn read_rtmp_chunk<S>(
     s: &mut S,
     chunk_size: &mut usize,
+    payload: &mut Option<BytesMut>,
+    last_timestamp: &mut u32,
     last_headers: &mut [Option<RtmpHeader>],
-) -> Result<RtmpMessage>
-where S: tokio::io::AsyncRead + Unpin
+) -> Result<Option<RtmpMessage>>
+where
+    S: AsyncReadExt + Unpin,
 {
+    // --- Step 1: 读取基本 chunk header ---
     let mut bh = [0u8; 1];
     s.read_exact(&mut bh).await?;
     let fmt = bh[0] >> 6;
     let csid = (bh[0] & 0x3f) as usize;
-
-    let (ts_raw, msg_len, msg_type, stream_id) = match fmt {
+    
+    // --- Step 2: 解析消息头 ---
+    let (mut ts_raw, msg_len, msg_type, stream_id) = match fmt {
         0 => {
             let mut mh = [0u8; 11];
             s.read_exact(&mut mh).await?;
             let ts = u32::from_be_bytes([0, mh[0], mh[1], mh[2]]);
+            *last_timestamp = ts;
             let msg_len = u32::from_be_bytes([0, mh[3], mh[4], mh[5]]) as usize;
             let msg_type = mh[6];
             let stream_id = u32::from_le_bytes([mh[7], mh[8], mh[9], mh[10]]);
             (ts, msg_len, msg_type, stream_id)
         }
         1 => {
+            let last = last_headers[csid].as_ref().ok_or_else(|| anyhow!("missing prev fmt1"))?;
             let mut mh = [0u8; 7];
             s.read_exact(&mut mh).await?;
-            let delta = u32::from_be_bytes([0, mh[0], mh[1], mh[2]]);
+            let ts = u32::from_be_bytes([0, mh[0], mh[1], mh[2]]);
+            *last_timestamp = last_timestamp.wrapping_add(ts);
             let msg_len = u32::from_be_bytes([0, mh[3], mh[4], mh[5]]) as usize;
             let msg_type = mh[6];
-            let last = last_headers[csid].as_ref().ok_or_else(|| anyhow!("missing prev fmt1"))?;
-            (last.timestamp.wrapping_add(delta), msg_len, msg_type, last.stream_id)
+            (ts, msg_len, msg_type, last.stream_id)
         }
         2 => {
+            let last = last_headers[csid].as_ref().ok_or_else(|| anyhow!("missing prev fmt2"))?;
             let mut mh = [0u8; 3];
             s.read_exact(&mut mh).await?;
-            let delta = u32::from_be_bytes([0, mh[0], mh[1], mh[2]]);
-            let last = last_headers[csid].as_ref().ok_or_else(|| anyhow!("missing prev fmt2"))?;
-            (last.timestamp.wrapping_add(delta), last.msg_len, last.msg_type, last.stream_id)
+            let ts = u32::from_be_bytes([0, mh[0], mh[1], mh[2]]);
+            *last_timestamp = last_timestamp.wrapping_add(ts);
+            (ts, last.msg_len, last.msg_type, last.stream_id)
         }
         3 => {
             let last = last_headers[csid].as_ref().ok_or_else(|| anyhow!("missing prev fmt3"))?;
-            (last.timestamp, last.msg_len, last.msg_type, last.stream_id)
+            if payload.is_none() {
+                *last_timestamp = last_timestamp.wrapping_add(last.ts_raw);
+            }
+            (last.ts_raw, last.msg_len, last.msg_type, last.stream_id)
         }
         _ => return Err(anyhow!("invalid fmt")),
     };
 
-    // Extended timestamp: if the 24-bit value was 0xffffff, read 4 extra bytes
-    let mut final_ts = ts_raw;
-    if fmt != 3 {
-        // According to spec, fmt 3 doesn't have an extended timestamp field if the prev header had one,
-        // but it reused it. Actually fmt 3 is special - if it follows a header that had extended ts, 
-        // it may or may NOT have its own extended ts field depending on chunking.
-        // Simple impl: check if ts was 0xffffff in the MATCH arms.
-        if ts_raw == 0xffffff {
-            let mut ext = [0u8; 4];
-            s.read_exact(&mut ext).await?;
-            final_ts = u32::from_be_bytes(ext);
-        }
-    } else if let Some(ref l) = last_headers[csid] {
-        // For fmt3, if the previous header for this CSID had an extended timestamp, it might be here too
-        if l.timestamp >= 0xffffff {
-             // Some encoders always put extended TS for fmt3 if the prev packet used it.
-             // We'll skip complex fmt3 ext-ts for now unless it breaks.
-        }
+    // --- Step 3: 扩展时间戳 ---
+    if ts_raw >= 0xFFFFFF {
+        let mut ext = [0u8; 4];
+        s.read_exact(&mut ext).await?;
+        ts_raw = u32::from_be_bytes(ext);
     }
 
+    // --- Step 4: 初始化 payload ---
+    if payload.is_none() {
+        *payload = Some(BytesMut::with_capacity(msg_len));
+    }
+    let buf = payload.as_mut().unwrap();
+
+    // --- Step 5: 读取 chunk 数据 ---
+    let remaining = msg_len - buf.len();
+    let read_len = remaining.min(*chunk_size);
+    let mut tmp = vec![0u8; read_len];
+    s.read_exact(&mut tmp).await?;
+    buf.extend_from_slice(&tmp);
+
+    // --- Step 6: 更新 last_headers ---
     last_headers[csid] = Some(RtmpHeader {
-        timestamp: final_ts,
+        ts_raw,
         msg_len,
         msg_type,
         stream_id,
     });
 
-    let mut payload = BytesMut::with_capacity(msg_len);
-    while payload.len() < msg_len {
-        let n = (*chunk_size).min(msg_len - payload.len());
-        let mut buf = vec![0u8; n];
-        s.read_exact(&mut buf).await?;
-        payload.extend_from_slice(&buf);
-        if payload.len() < msg_len {
-            s.read_exact(&mut bh).await?;
-        }
+    // --- Step 7: 消息是否完整 ---
+    if buf.len() == msg_len {
+        Ok(Some(RtmpMessage {
+                csid: csid as _,
+                timestamp: *last_timestamp,
+                msg_type: msg_type,
+                stream_id: stream_id,
+                payload: payload.take().unwrap(),
+            }))
+    } else {
+        Ok(None)
     }
-
-    Ok(RtmpMessage { csid: csid as u8, timestamp: final_ts, msg_type, stream_id, payload })
 }
 
+/// 读取完整的 RTMP 消息
+pub async fn read_rtmp_message<S>(
+    s: &mut S,
+    chunk_size: &mut usize,
+    last_timestamp: &mut u32,
+    last_headers: &mut [Option<RtmpHeader>],
+) -> Result<RtmpMessage>
+where
+    S: AsyncReadExt + Unpin,
+{
+    let mut payload = None;
+    loop {
+        let chunk = read_rtmp_chunk(s, chunk_size, &mut payload, last_timestamp, last_headers).await?;
+        if let Some(x) = chunk {
+            // 消息读取完成
+            return Ok(x);
+        }
+    }
+}
 pub async fn write_rtmp_message<S>(s: &mut S, msg: &RtmpMessage, chunk_size: usize) -> Result<()> 
 where S: tokio::io::AsyncWrite + Unpin
 {
