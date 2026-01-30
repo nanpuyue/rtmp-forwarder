@@ -7,7 +7,7 @@ use axum::{
     body::Body,
 };
 use std::net::SocketAddr;
-use crate::config::{SharedConfig, AppConfig};
+use crate::config::{GetForwarders, SharedConfig, WebConfig};
 use crate::flv_manager::FlvManager;
 use crate::forwarder_manager::ForwarderCommand;
 use crate::stream_manager::{StreamManager, StreamMessage, StreamEvent};
@@ -81,25 +81,25 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
     }
 }
 
-async fn get_config(Extension(config): Extension<SharedConfig>) -> Json<AppConfig> {
+async fn get_config(Extension(config): Extension<SharedConfig>) -> Json<WebConfig> {
     let c = config.read().unwrap();
-    Json(c.clone())
+    Json(WebConfig::from(&*c))
 }
 
 
 async fn update_config(
     Extension(config): Extension<SharedConfig>,
     Extension(forwarder_cmd_tx): Extension<mpsc::UnboundedSender<ForwarderCommand>>,
-    Json(new_config): Json<AppConfig>,
+    Json(web_config): Json<WebConfig>,
 ) -> Json<bool> {
-    let forwarders = new_config.get_forwarders();
     let success= {
         let mut c = config.write().unwrap();
-        *c = new_config;
+        c.update_from_web_config(&web_config);
         c.save().is_ok()
     };
 
     if success {
+        let forwarders = web_config.get_forwarders();
         info!("Config saved, notifying ForwarderManager with {} forwarders", forwarders.len());
         forwarder_cmd_tx.send(ForwarderCommand::UpdateConfig(forwarders)).ok();
     }
