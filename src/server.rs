@@ -38,13 +38,12 @@ pub async fn handle_client(
     let client_id = CLIENT_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut u2c_chunk = 128usize;
     let mut c2u_chunk = 128usize;
-    let mut client_timestamp= 0;
     let mut client_headers: Vec<Option<crate::rtmp::RtmpHeader>> = vec![None; 64];
     let mut client_app: Option<String> = None;
     let mut client_stream: Option<String> = None;
 
     loop {
-        let msg = match read_rtmp_message(&mut client, &mut c2u_chunk, &mut client_timestamp, &mut client_headers[..]).await {
+        let msg = match read_rtmp_message(&mut client, &mut c2u_chunk, &mut client_headers[..]).await {
             Ok(m) => m,
             Err(e) => { info!("Client disconnected: {}", e); break; }
         };
