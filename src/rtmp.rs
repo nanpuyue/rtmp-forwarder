@@ -12,7 +12,7 @@ pub struct RtmpMessage {
     pub payload: BytesMut,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct RtmpHeader {
     pub timestamp: u32,
     pub timestamp_raw: u32,

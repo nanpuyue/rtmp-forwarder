@@ -4,6 +4,7 @@ mod amf;
 mod config;
 mod handshake;
 mod rtmp;
+mod rtmp_codec;
 mod server;
 mod web;
 mod forwarder;
