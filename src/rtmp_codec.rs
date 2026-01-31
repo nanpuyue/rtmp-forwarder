@@ -1,7 +1,7 @@
-use bytes::{Buf, BufMut, BytesMut};
+use bytes::BytesMut;
 use tokio::io::AsyncReadExt;
-use tokio_stream::{Stream, StreamExt};
-use tokio_util::codec::{Decoder, Encoder, Framed, FramedRead};
+use tokio_stream::{Stream};
+use tokio_util::codec::{Decoder, Encoder, FramedRead};
 use crate::rtmp::{RtmpMessage, RtmpHeader};
 use std::{io, pin::Pin, task::{Context, Poll}};
 
@@ -9,10 +9,11 @@ use std::{io, pin::Pin, task::{Context, Poll}};
 #[derive(Debug, Clone)]
 pub struct RtmpCodec {
     chunk_size: usize,
-    last_headers: [Option<RtmpHeader>; 64],
-    remaining_payload: [usize; 64]
+    last_headers: Vec<Option<RtmpHeader>>,
+    remaining_payload: Vec<usize>
 }
 
+#[derive(Debug)]
 pub struct  RtmpChunk {
     pub header: RtmpHeader,
     pub payload_offset: usize,
@@ -20,7 +21,8 @@ pub struct  RtmpChunk {
 }
 
 pub struct RtmpMessageStream<S: AsyncReadExt + Unpin> {
-    pub framed_chunk: FramedRead<S, RtmpCodec>
+    pub framed_chunk: FramedRead<S, RtmpCodec>,
+    pub payload: Vec<Option<BytesMut>>,
 }
 
 impl RtmpChunk {
@@ -29,30 +31,19 @@ impl RtmpChunk {
     }
 }
 
-impl Default for RtmpCodec {
-    fn default() -> Self {
-        Self {
-            chunk_size: 128,
-            last_headers: [None; 64],
-            remaining_payload: [0; 64]
-        }
-    }
-}
 
 impl RtmpCodec {
     /// 创建一个新的 RTMP 编解码器
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(chunk_size: usize) -> Self {
+        Self{
+            chunk_size,
+            last_headers: vec![None; 64],
+            remaining_payload: vec![0; 64],
+        }
     }
 
-    /// 设置 chunk 大小
     pub fn set_chunk_size(&mut self, size: usize) {
         self.chunk_size = size;
-    }
-
-    /// 获取当前 chunk 大小
-    pub fn chunk_size(&self) -> usize {
-        self.chunk_size
     }
 }
 
@@ -61,10 +52,6 @@ impl Decoder for RtmpCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if src.is_empty() {
-            return Ok(None);
-        }
-
         // 读取基本 chunk header
         if src.len() < 1 {
             return Ok(None);
@@ -86,9 +73,10 @@ impl Decoder for RtmpCodec {
 
         // 解析消息头
         let header = self.last_headers[csid].get_or_insert_default();
+        header.csid = csid;
         match fmt {
             0 => {
-                let mh = &src[1..11];
+                let mh = &src[1..12];
                 header.timestamp_is_delta = false;
                 header.timestamp_raw = u32::from_be_bytes([0, mh[0], mh[1], mh[2]]);
                 header.msg_len = u32::from_be_bytes([0, mh[3], mh[4], mh[5]]) as usize;
@@ -96,14 +84,14 @@ impl Decoder for RtmpCodec {
                 header.stream_id = u32::from_le_bytes([mh[7], mh[8], mh[9], mh[10]]);
             }
             1 => {
-                let mh = &src[1..7];
+                let mh = &src[1..8];
                 header.timestamp_is_delta = true;
                 header.timestamp_raw = u32::from_be_bytes([0, mh[0], mh[1], mh[2]]);
                 header.msg_len = u32::from_be_bytes([0, mh[3], mh[4], mh[5]]) as usize;
                 header.msg_type = mh[6];
             }
             2 => {
-                let mh = &src[1..3];
+                let mh = &src[1..4];
                 header.timestamp_is_delta = true;
                 header.timestamp_raw = u32::from_be_bytes([0, mh[0], mh[1], mh[2]]);
             }
@@ -141,11 +129,12 @@ impl Decoder for RtmpCodec {
         let data = src.split_to(offset + payload_len);
         self.remaining_payload[csid] -= payload_len;
 
-            Ok(Some(RtmpChunk {
-                header: *header,
-                payload_offset: offset,
-                data
-            }))
+        let chunk = RtmpChunk {
+            header: *header,
+            payload_offset: offset,
+            data
+        };
+        Ok(Some(chunk))
     }
 }
 
@@ -160,31 +149,54 @@ impl Encoder<RtmpChunk> for RtmpCodec {
 
 impl<S: AsyncReadExt + Unpin>  RtmpMessageStream<S> {
     pub fn new(s: S, chunk_size: usize) -> Self {
-        let mut codec = RtmpCodec::new();
-        codec.set_chunk_size(chunk_size);
+        let codec = RtmpCodec::new(chunk_size);
         let framed_chunk = FramedRead::new(s, codec);
-        Self { framed_chunk }
+        Self {
+            framed_chunk,
+            payload: vec![None; 64],
+         }
+    }
+    
+    pub fn set_chunk_size(&mut self, size: usize) {
+        self.framed_chunk.decoder_mut().set_chunk_size(size);
     }
 }
 
 impl<S: AsyncReadExt + Unpin> Stream for RtmpMessageStream<S> {
-    type Item = RtmpMessage;
+    type Item = Result<RtmpMessage, io::Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        todo!()
-    }
-}
+        let this = self.get_mut();
 
-// 为 BytesMut 实现 put_u24 方法
-trait PutU24 {
-    fn put_u24(&mut self, v: u32);
-}
-
-impl PutU24 for BytesMut {
-    fn put_u24(&mut self, v: u32) {
-        self.put_u8(((v >> 16) & 0xff) as u8);
-        self.put_u8(((v >> 8) & 0xff) as u8);
-        self.put_u8((v & 0xff) as u8);
+        // 使用内部的 framed_chunk 来获取下一个 chunk
+        loop {
+            match Pin::new(&mut this.framed_chunk).poll_next(cx) {
+                Poll::Ready(Some(Ok(chunk))) => {
+                    let csid = chunk.header.csid;
+                    if this.payload[csid].is_none() {
+                        this.payload[csid] = Some(BytesMut::with_capacity(chunk.header.msg_len));
+                    }
+                    let payload = this.payload[csid].as_mut().unwrap();
+                    payload.extend_from_slice(chunk.payload());
+                    if chunk.header.msg_len == payload.len() {
+                        // 完整消息，直接返回
+                        break Poll::Ready(Some(Ok(RtmpMessage {
+                            csid: csid as u8,
+                            timestamp: chunk.header.timestamp,
+                            msg_type: chunk.header.msg_type,
+                            stream_id: chunk.header.stream_id,
+                            payload: this.payload[csid].take().unwrap(),
+                        })))
+                    }
+                }
+                // 传播错误
+                Poll::Ready(Some(Err(e))) => break Poll::Ready(Some(Err(e))),
+                // 流结束
+                Poll::Ready(None) => break Poll::Ready(None),
+                // 还没有数据，等待更多数据
+                Poll::Pending => break Poll::Pending,
+            }
+        }
     }
 }
 
