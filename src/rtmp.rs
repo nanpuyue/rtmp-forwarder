@@ -14,6 +14,7 @@ pub struct RtmpMessage {
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct RtmpHeader {
+    pub csid: usize,
     pub timestamp: u32,
     pub timestamp_raw: u32,
     pub timestamp_is_delta: bool,
