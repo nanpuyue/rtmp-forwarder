@@ -58,6 +58,9 @@ impl Decoder for RtmpCodec {
         }
         let fmt = src[0] >> 6;
         let csid = (src[0] & 0x3f) as usize;
+        if csid == 0 || csid == 1 {
+            return Err(io::Error::new( io::ErrorKind::InvalidData, "Extended CSID not supported"));
+        }
 
         // 确保有足够的数据读取消息头
         let header_len = match fmt {
