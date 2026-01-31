@@ -168,35 +168,32 @@ impl<S: AsyncReadExt + Unpin> Stream for RtmpMessageStream<S> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
 
-        // 使用内部的 framed_chunk 来获取下一个 chunk
-        loop {
-            match Pin::new(&mut this.framed_chunk).poll_next(cx) {
-                Poll::Ready(Some(Ok(chunk))) => {
+        while let Poll::Ready(opt) = Pin::new(&mut this.framed_chunk).poll_next(cx) {
+            match opt {
+                Some(Ok(chunk)) => {
                     let csid = chunk.header.csid;
                     if this.payload[csid].is_none() {
                         this.payload[csid] = Some(BytesMut::with_capacity(chunk.header.msg_len));
                     }
                     let payload = this.payload[csid].as_mut().unwrap();
                     payload.extend_from_slice(chunk.payload());
-                    if chunk.header.msg_len == payload.len() {
-                        // 完整消息，直接返回
-                        break Poll::Ready(Some(Ok(RtmpMessage {
+
+                    if payload.len() == chunk.header.msg_len {
+                        let msg = RtmpMessage {
                             csid: csid as u8,
                             timestamp: chunk.header.timestamp,
                             msg_type: chunk.header.msg_type,
                             stream_id: chunk.header.stream_id,
                             payload: this.payload[csid].take().unwrap(),
-                        })))
+                        };
+                        return Poll::Ready(Some(Ok(msg)));
                     }
                 }
-                // 传播错误
-                Poll::Ready(Some(Err(e))) => break Poll::Ready(Some(Err(e))),
-                // 流结束
-                Poll::Ready(None) => break Poll::Ready(None),
-                // 还没有数据，等待更多数据
-                Poll::Pending => break Poll::Pending,
+                Some(Err(e)) => return Poll::Ready(Some(Err(e))),
+                None => return Poll::Ready(None),
             }
         }
+
+        Poll::Pending
     }
 }
-
