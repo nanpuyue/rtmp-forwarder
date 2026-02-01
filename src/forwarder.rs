@@ -19,6 +19,7 @@ use crate::rtmp::write_rtmp_message;
 use crate::rtmp_codec::RtmpMessage;
 use crate::server::ForwarderConfig;
 use anyhow::Result;
+use bytes::Bytes;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
@@ -127,7 +128,7 @@ impl Forwarder {
     /// Main loop for the forwarder task.
     pub async fn run(mut self) {
         let mut state = ConnectionState::new();
-        let mut chunk_size = 128usize;
+        let mut chunk_size = 4096;
 
         info!("Forwarder [{}] started", self.config.addr);
 
@@ -278,13 +279,18 @@ impl Forwarder {
         )
         .await?;
 
+        // 设置 chunk size 为 4096
+        crate::rtmp::write_rtmp_message2(w, 3, 0, 1, 0 ,
+            &Bytes::from(4096u32.to_be_bytes().to_vec()), 128
+        ).await.ok();
+
         // 2-3. releaseStream and FCPublish are required by many standard servers (like Nginx-RTMP)
         for (cmd, tx) in [("releaseStream", 2.0), ("FCPublish", 3.0)] {
             crate::rtmp::send_rtmp_command(
                 w,
                 3,
                 0,
-                128,
+                4096,
                 cmd,
                 tx,
                 &[],
@@ -294,7 +300,7 @@ impl Forwarder {
         }
 
         // 4. Create the logical stream
-        crate::rtmp::send_rtmp_command(w, 3, 0, 128, "createStream", 4.0, &[], &[]).await?;
+        crate::rtmp::send_rtmp_command(w, 3, 0, 4096, "createStream", 4.0, &[], &[]).await?;
 
         // 5. Start publishing as "live"
         info!(
@@ -305,7 +311,7 @@ impl Forwarder {
             w,
             3,
             1,
-            128,
+            4096,
             "publish",
             5.0,
             &[],
@@ -320,17 +326,17 @@ impl Forwarder {
         if let Some(ref m) = self.snapshot.metadata {
             let mut m = m.clone();
             m.header.timestamp = 0;
-            write_rtmp_message(w, &m, 128).await.ok();
+            write_rtmp_message(w, &m, 4096).await.ok();
         }
         if let Some(ref v) = self.snapshot.video_seq_hdr {
             let mut v = v.clone();
             v.header.timestamp = 0;
-            write_rtmp_message(w, &v, 128).await.ok();
+            write_rtmp_message(w, &v, 4096).await.ok();
         }
         if let Some(ref a) = self.snapshot.audio_seq_hdr {
             let mut a = a.clone();
             a.header.timestamp = 0;
-            write_rtmp_message(w, &a, 128).await.ok();
+            write_rtmp_message(w, &a, 4096).await.ok();
         }
         Ok(())
     }
@@ -355,7 +361,7 @@ impl Forwarder {
                 w,
                 3,
                 1,
-                128,
+                4096,
                 "FCUnpublish",
                 6.0,
                 &[],
@@ -368,7 +374,7 @@ impl Forwarder {
                 w,
                 3,
                 1,
-                128,
+                4096,
                 "deleteStream",
                 7.0,
                 &[],
