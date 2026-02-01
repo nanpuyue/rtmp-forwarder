@@ -53,6 +53,7 @@ pub struct RtmpMessageHeader {
 pub struct RtmpMessage {
     pub csid: u8,
     pub header: RtmpMessageHeader,
+    pub chunk_size: usize,
     pub chunks: Vec<RtmpChunk>,
 }
 
@@ -107,7 +108,7 @@ impl RtmpMessage {
     ) -> Self {
         let header = RtmpMessageHeader { timestamp, msg_len: payload.len(), msg_type, stream_id };
         let chunks = RtmpMessageIter::new_with_payload(csid, timestamp, msg_type, stream_id, chunk_size, payload).collect();
-        Self { csid, header, chunks }
+        Self { csid, header, chunk_size, chunks }
     }
 
     pub fn payload(&self) -> Bytes {
@@ -279,6 +280,7 @@ impl<S: AsyncReadExt + Unpin> Stream for RtmpMessageStream<S> {
                         let msg = RtmpMessage {
                             csid: csid as u8,
                             header: chunk.header.into(),
+                            chunk_size: this.framed_chunk.decoder().chunk_size,
                             chunks: this.chunks[csid].take().unwrap(),
                         };
                         return Poll::Ready(Some(Ok(msg)));

@@ -6,8 +6,15 @@ use crate::rtmp_codec::{RtmpMessage, RtmpMessageIter};
 pub async fn write_rtmp_message<S>(s: &mut S, msg: &RtmpMessage, chunk_size: usize) -> Result<()> 
 where S: tokio::io::AsyncWrite + Unpin
 {
-    for chunk in RtmpMessageIter::new_with_msg(msg, chunk_size) {
-        s.write_all(&chunk.raw_bytes).await?;
+    // chunk size 匹配时原样转发
+    if chunk_size == msg.chunk_size {
+        for chunk in &msg.chunks {
+            s.write_all(&chunk.raw_bytes).await?;
+        }
+    } else {
+        for chunk in RtmpMessageIter::new_with_msg(msg, chunk_size) {
+            s.write_all(&chunk.raw_bytes).await?;
+        }
     }
     Ok(())
 }

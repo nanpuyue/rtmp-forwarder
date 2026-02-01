@@ -220,5 +220,5 @@ impl ForwarderManager {
 }
 
 fn should_forward(msg: &RtmpMessage) -> bool {
-    matches!(msg.header.msg_type, 8 | 9 | 18 | 15)
+    matches!(msg.header.msg_type, 1 | 8 | 9 | 18 | 15)
 }
