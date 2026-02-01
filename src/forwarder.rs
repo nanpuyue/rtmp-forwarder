@@ -1,5 +1,5 @@
 //! RTMP Forwarding Engine
-//! 
+//!
 //! This module implements the "Forwarder" model for RTMP stream fan-out.
 //! Each `Forwarder` represents a single destination server and is responsible
 //! for its own connection lifecycle, handshaking, and media forwarding.
@@ -13,16 +13,18 @@
 //! 3. **Protocol Unification**: Handles both original relay (dynamic path) and
 //!    explicit upstream destinations through a unified path detection mechanism.
 
-use crate::rtmp::{write_rtmp_message, RtmpMessage};
 use crate::amf::amf_command_name;
 use crate::handshake::handshake_with_server;
+use crate::rtmp::write_rtmp_message;
+use crate::rtmp_codec::RtmpMessage;
 use crate::server::ForwarderConfig;
 use anyhow::Result;
+use bytes::Bytes;
+use std::time::{Duration, Instant};
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tokio::io::AsyncReadExt;
 use tracing::{debug, error, info, warn};
-use std::time::{Duration, Instant};
 
 /// ProtocolSnapshot caches the critical state headers and dynamic names
 /// received from the client to sync with new or reconnected destinations.
@@ -39,39 +41,40 @@ impl ProtocolSnapshot {
     /// Inspect incoming messages and update the cached protocol state.
     /// This allows the forwarder to know the latest app/stream path at any time.
     pub fn update_from_message(&mut self, msg: &RtmpMessage) {
-        match msg.header.msg_type {
-            // MetaData (onMetaData)
-            18 | 15 => self.metadata = Some(msg.clone()),
-            // Video sequence header (AVC/H264)
-            9 if msg.payload.len() >= 2 && msg.payload[0] == 0x17 && msg.payload[1] == 0 => {
-                self.video_seq_hdr = Some(msg.clone());
-            }
-            // Audio sequence header (AAC)
-            8 if msg.payload.len() >= 2 && (msg.payload[0] >> 4) == 10 && msg.payload[1] == 0 => {
-                self.audio_seq_hdr = Some(msg.clone());
-            }
-            // Control commands (peek for app/stream names)
-            20 => {
-                if let Ok(cmd) = amf_command_name(&msg.payload) {
-                    let mut r = crate::amf::AmfReader::new(&msg.payload);
-                    let _ = r.read_string(); // Skip command name
-                    match cmd.as_str() {
-                        "connect" => {
-                            if let Ok(obj) = r.read_number().and_then(|_| r.read_object())
-                                && let Some((_, crate::amf::Amf0::String(s))) = obj.iter().find(|(k, _)| k == "app") {
-                                    self.client_app = Some(s.clone());
-                                }
-                        }
-                        "publish" | "releaseStream" | "FCPublish" => {
-                            let _ = r.read_number().and_then(|_| r.read_null());
-                            if let Ok(s) = r.read_string() { self.client_stream = Some(s); }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
+        todo!()
+        // match msg.header.msg_type {
+        //     // MetaData (onMetaData)
+        //     18 | 15 => self.metadata = Some(msg.clone()),
+        //     // Video sequence header (AVC/H264)
+        //     9 if msg.payload.len() >= 2 && msg.payload[0] == 0x17 && msg.payload[1] == 0 => {
+        //         self.video_seq_hdr = Some(msg.clone());
+        //     }
+        //     // Audio sequence header (AAC)
+        //     8 if msg.payload.len() >= 2 && (msg.payload[0] >> 4) == 10 && msg.payload[1] == 0 => {
+        //         self.audio_seq_hdr = Some(msg.clone());
+        //     }
+        //     // Control commands (peek for app/stream names)
+        //     20 => {
+        //         if let Ok(cmd) = amf_command_name(&msg.payload) {
+        //             let mut r = crate::amf::AmfReader::new(&msg.payload);
+        //             let _ = r.read_string(); // Skip command name
+        //             match cmd.as_str() {
+        //                 "connect" => {
+        //                     if let Ok(obj) = r.read_number().and_then(|_| r.read_object())
+        //                         && let Some((_, crate::amf::Amf0::String(s))) = obj.iter().find(|(k, _)| k == "app") {
+        //                             self.client_app = Some(s.clone());
+        //                         }
+        //                 }
+        //                 "publish" | "releaseStream" | "FCPublish" => {
+        //                     let _ = r.read_number().and_then(|_| r.read_null());
+        //                     if let Ok(s) = r.read_string() { self.client_stream = Some(s); }
+        //                 }
+        //                 _ => {}
+        //             }
+        //         }
+        //     }
+        //     _ => {}
+        // }
     }
 }
 
@@ -97,12 +100,12 @@ impl ConnectionState {
             last_attempt: None,
         }
     }
-    
+
     fn can_attempt(&self) -> bool {
         if self.failure >= MAX_FAILURE {
             return false;
         }
-        
+
         if let Some(last) = self.last_attempt {
             let backoff_secs = 2u64.pow(self.failure);
             last.elapsed() >= Duration::from_secs(backoff_secs)
@@ -132,16 +135,22 @@ impl Forwarder {
             match event {
                 ForwardEvent::Message(msg) => {
                     // Update state even if we haven't connected yet
-                    self.snapshot.update_from_message(&msg);
-                    
+                    // self.snapshot.update_from_message(&msg);
+
                     // Skip forwarding control commands as we replay our own handshake
-                    if msg.header.msg_type == 20 { continue; }
+                    if msg.header.msg_type == 20 {
+                        continue;
+                    }
 
                     // Try to establish connection with retry logic
                     if state.conn.is_none() && state.can_attempt() {
                         state.last_attempt = Some(Instant::now());
-                        debug!("[{}] Connecting (attempt #{})", self.config.addr, state.failure + 1);
-                        
+                        debug!(
+                            "[{}] Connecting (attempt #{})",
+                            self.config.addr,
+                            state.failure + 1
+                        );
+
                         if let Some(conn) = self.try_connect().await {
                             info!("[{}] Connected successfully", self.config.addr);
                             state.conn = Some(conn);
@@ -150,7 +159,10 @@ impl Forwarder {
                         } else {
                             state.failure += 1;
                             if state.failure >= MAX_FAILURE {
-                                warn!("[{}] Failed {} times, giving up", self.config.addr, state.failure);
+                                warn!(
+                                    "[{}] Failed {} times, giving up",
+                                    self.config.addr, state.failure
+                                );
                                 break;
                             }
                         }
@@ -161,9 +173,10 @@ impl Forwarder {
                         if let Err(e) = write_rtmp_message(w, &msg, chunk_size).await {
                             error!("[{}] Write error: {}", self.config.addr, e);
                             state.conn = None;
-                        } else if msg.header.msg_type == 1 && msg.payload.len() >= 4 {
+                        } else if msg.header.msg_type == 1 && msg.header.msg_len >= 4 {
                             // Sync output chunk size if destination requests change (via SetChunkSize)
-                            chunk_size = u32::from_be_bytes(msg.payload[..4].try_into().unwrap()) as usize;
+                            chunk_size =
+                                u32::from_be_bytes(msg.payload()[..4].try_into().unwrap()) as usize;
                         }
                     }
                 }
@@ -181,25 +194,42 @@ impl Forwarder {
     /// Attempt to connect and perform RTMP handshake + setup.
     async fn try_connect(&self) -> Option<tokio::net::tcp::OwnedWriteHalf> {
         // Decide which app/stream names to use (priority: config override > client original)
-        let app = self.config.app.as_deref().or(self.snapshot.client_app.as_deref());
-        let stream = self.config.stream.as_deref().or(self.snapshot.client_stream.as_deref());
-        
+        let app = self
+            .config
+            .app
+            .as_deref()
+            .or(self.snapshot.client_app.as_deref());
+        let stream = self
+            .config
+            .stream
+            .as_deref()
+            .or(self.snapshot.client_stream.as_deref());
+
         if let (Some(a), Some(s)) = (app, stream) {
             let mut addr = self.config.addr.clone();
-            if !addr.contains(':') { addr.push_str(":1935"); }
+            if !addr.contains(':') {
+                addr.push_str(":1935");
+            }
 
             // Connect to forwarder destination
-            if let Ok(Ok(mut socket)) = tokio::time::timeout(std::time::Duration::from_secs(3), TcpStream::connect(&addr)).await {
+            if let Ok(Ok(mut socket)) =
+                tokio::time::timeout(std::time::Duration::from_secs(3), TcpStream::connect(&addr))
+                    .await
+            {
                 socket.set_nodelay(true).ok();
-                
+
                 // Step 0: C0+C1 -> S0+S1+S2 -> C2
                 if handshake_with_server(&mut socket).await.is_ok() {
                     let (mut r, mut w) = socket.into_split();
-                    
+
                     // Spawn a background task to drain anything sent from destination to us
                     tokio::spawn(async move {
                         let mut buf = [0u8; 1024];
-                        while let Ok(n) = r.read(&mut buf).await { if n == 0 { break; } }
+                        while let Ok(n) = r.read(&mut buf).await {
+                            if n == 0 {
+                                break;
+                            }
+                        }
                     });
 
                     // Perform RTMP command sequence (Connect -> Publish)
@@ -213,61 +243,137 @@ impl Forwarder {
     }
 
     /// Perform the standard RTMP publishing command sequence.
-    async fn setup_protocol(&self, w: &mut tokio::net::tcp::OwnedWriteHalf, app: &str, stream: &str) -> Result<()> {
+    async fn setup_protocol(
+        &self,
+        w: &mut tokio::net::tcp::OwnedWriteHalf,
+        app: &str,
+        stream: &str,
+    ) -> Result<()> {
         // 1. connect
-        info!("c->u [{}]: setup: app=\"{}\" client=\"{}\"", self.config.addr, app, self.snapshot.client_app.as_deref().unwrap_or(""));
-        crate::rtmp::send_rtmp_command(w, 3, 0, 128, "connect", 1.0, &[
-            ("app", crate::amf::Amf0::String(app.into())),
-            ("tcUrl", crate::amf::Amf0::String(format!("rtmp://{}/{}", self.config.addr, app))),
-            ("fmsVer", crate::amf::Amf0::String("FMS/3,0,1,123".into())),
-            ("capabilities", crate::amf::Amf0::Number(31.0)),
-        ], &[]).await?;
+        info!(
+            "c->u [{}]: setup: app=\"{}\" client=\"{}\"",
+            self.config.addr,
+            app,
+            self.snapshot.client_app.as_deref().unwrap_or("")
+        );
+        crate::rtmp::send_rtmp_command(
+            w,
+            3,
+            0,
+            128,
+            "connect",
+            1.0,
+            &[
+                ("app", crate::amf::Amf0::String(app.into())),
+                (
+                    "tcUrl",
+                    crate::amf::Amf0::String(format!("rtmp://{}/{}", self.config.addr, app)),
+                ),
+                ("fmsVer", crate::amf::Amf0::String("FMS/3,0,1,123".into())),
+                ("capabilities", crate::amf::Amf0::Number(31.0)),
+            ],
+            &[],
+        )
+        .await?;
 
         // 2-3. releaseStream and FCPublish are required by many standard servers (like Nginx-RTMP)
         for (cmd, tx) in [("releaseStream", 2.0), ("FCPublish", 3.0)] {
-            crate::rtmp::send_rtmp_command(w, 3, 0, 128, cmd, tx, &[], &[crate::amf::Amf0::String(stream.into())]).await?;
+            crate::rtmp::send_rtmp_command(
+                w,
+                3,
+                0,
+                128,
+                cmd,
+                tx,
+                &[],
+                &[crate::amf::Amf0::String(stream.into())],
+            )
+            .await?;
         }
 
         // 4. Create the logical stream
         crate::rtmp::send_rtmp_command(w, 3, 0, 128, "createStream", 4.0, &[], &[]).await?;
 
         // 5. Start publishing as "live"
-        info!("c->u [{}]: publish: stream=\"{}\"", self.config.addr, stream);
-        crate::rtmp::send_rtmp_command(w, 3, 1, 128, "publish", 5.0, &[], &[
-            crate::amf::Amf0::String(stream.into()),
-            crate::amf::Amf0::String("live".into())
-        ]).await?;
+        info!(
+            "c->u [{}]: publish: stream=\"{}\"",
+            self.config.addr, stream
+        );
+        crate::rtmp::send_rtmp_command(
+            w,
+            3,
+            1,
+            128,
+            "publish",
+            5.0,
+            &[],
+            &[
+                crate::amf::Amf0::String(stream.into()),
+                crate::amf::Amf0::String("live".into()),
+            ],
+        )
+        .await?;
 
         // 6. Sync initial state (MetaData + Sequence Headers) so the stream can be decoded instantly
         if let Some(ref m) = self.snapshot.metadata {
-            let mut m = m.clone(); m.header.timestamp = 0;
+            let mut m = m.clone();
+            m.header.timestamp = 0;
             write_rtmp_message(w, &m, 128).await.ok();
         }
         if let Some(ref v) = self.snapshot.video_seq_hdr {
-            let mut v = v.clone(); v.header.timestamp = 0;
+            let mut v = v.clone();
+            v.header.timestamp = 0;
             write_rtmp_message(w, &v, 128).await.ok();
         }
         if let Some(ref a) = self.snapshot.audio_seq_hdr {
-            let mut a = a.clone(); a.header.timestamp = 0;
+            let mut a = a.clone();
+            a.header.timestamp = 0;
             write_rtmp_message(w, &a, 128).await.ok();
         }
         Ok(())
     }
-    
+
     async fn graceful_shutdown(&self, w: &mut tokio::net::tcp::OwnedWriteHalf) {
         if let (Some(_app), Some(stream)) = (
-            self.config.app.as_deref().or(self.snapshot.client_app.as_deref()),
-            self.config.stream.as_deref().or(self.snapshot.client_stream.as_deref())
+            self.config
+                .app
+                .as_deref()
+                .or(self.snapshot.client_app.as_deref()),
+            self.config
+                .stream
+                .as_deref()
+                .or(self.snapshot.client_stream.as_deref()),
         ) {
-            info!("Destination [{}] graceful shutdown: stream={}", self.config.addr, stream);
-            
-            crate::rtmp::send_rtmp_command(w, 3, 1, 128, "FCUnpublish", 6.0, &[], &[
-                crate::amf::Amf0::String(stream.into())
-            ]).await.ok();
-            
-            crate::rtmp::send_rtmp_command(w, 3, 1, 128, "deleteStream", 7.0, &[], &[
-                crate::amf::Amf0::Number(1.0)
-            ]).await.ok();
+            info!(
+                "Destination [{}] graceful shutdown: stream={}",
+                self.config.addr, stream
+            );
+
+            crate::rtmp::send_rtmp_command(
+                w,
+                3,
+                1,
+                128,
+                "FCUnpublish",
+                6.0,
+                &[],
+                &[crate::amf::Amf0::String(stream.into())],
+            )
+            .await
+            .ok();
+
+            crate::rtmp::send_rtmp_command(
+                w,
+                3,
+                1,
+                128,
+                "deleteStream",
+                7.0,
+                &[],
+                &[crate::amf::Amf0::Number(1.0)],
+            )
+            .await
+            .ok();
         }
     }
 }

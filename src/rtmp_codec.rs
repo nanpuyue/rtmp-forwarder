@@ -1,9 +1,10 @@
-use bytes::BytesMut;
+use bytes::{BufMut, Bytes, BytesMut};
 use tokio::io::AsyncReadExt;
 use tokio_stream::{Stream};
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
-use crate::rtmp::{RtmpMessage, RtmpMessageHeader};
 use std::{io, pin::Pin, task::{Context, Poll}};
+
+use crate::rtmp::PutU24;
 
 /// RTMP 编解码器，用于在异步流中编码和解码 RTMP 消息
 #[derive(Debug, Clone)]
@@ -14,7 +15,7 @@ pub struct RtmpCodec {
 }
 
 #[derive(Default, Debug, Clone, Copy)]
-pub struct ChunkTimestamp {
+pub struct RtmpChunkTimestamp {
     pub absolute: u32,
     pub raw: u32,
     pub delta: bool,
@@ -24,27 +25,51 @@ pub struct ChunkTimestamp {
 pub struct RtmpChunkHeader {
     pub fmt: u8,
     pub csid: usize,
-    pub timestamp: ChunkTimestamp,
+    pub timestamp: RtmpChunkTimestamp,
     pub msg_len: usize,
     pub msg_type: u8,
     pub stream_id: u32,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct  RtmpChunk {
     pub fmt: u8,
     pub csid: usize,
     pub header: RtmpChunkHeader,
     pub payload_offset: usize,
-    pub raw_bytes: BytesMut,
+    pub msg_complete: bool,
+    pub raw_bytes: Bytes,
+}
+
+#[derive(Clone, Debug)]
+pub struct RtmpMessageHeader {
+    pub timestamp: u32,
+    pub msg_len: usize,
+    pub msg_type: u8,
+    pub stream_id: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct RtmpMessage {
+    pub csid: u8,
+    pub header: RtmpMessageHeader,
+    pub chunks: Vec<RtmpChunk>,
+}
+
+pub struct RtmpMessageIter {
+    csid: usize,
+    first: bool,
+    chunk_size: usize,
+    header: RtmpMessageHeader,
+    payload: BytesMut,
 }
 
 pub struct RtmpMessageStream<S: AsyncReadExt + Unpin> {
     pub framed_chunk: FramedRead<S, RtmpCodec>,
-    pub payload: Vec<Option<BytesMut>>,
+    pub chunks: Vec<Option<Vec<RtmpChunk>>>,
 }
 
-impl ChunkTimestamp {
+impl RtmpChunkTimestamp {
     fn update(&mut self, raw: u32) {
         if self.delta {
            self.absolute = self.absolute.wrapping_add(raw)
@@ -64,12 +89,35 @@ impl From<RtmpChunkHeader> for RtmpMessageHeader {
     fn from(ch: RtmpChunkHeader) -> Self {
         Self {
             timestamp: ch.timestamp.absolute,
+            msg_len: ch.msg_len,
             msg_type: ch.msg_type,
             stream_id: ch.stream_id,
         }
     }
 }
 
+impl RtmpMessage {
+    pub fn new_with_payload(
+        csid: u8,
+        timestamp: u32,
+        msg_type: u8,
+        stream_id: u32,
+        chunk_size: usize,
+        payload: &Bytes
+    ) -> Self {
+        let header = RtmpMessageHeader { timestamp, msg_len: payload.len(), msg_type, stream_id };
+        let chunks = RtmpMessageIter::new_with_payload(csid, timestamp, msg_type, stream_id, chunk_size, payload).collect();
+        Self { csid, header, chunks }
+    }
+
+    pub fn payload(&self) -> Bytes {
+        let mut buf = BytesMut::with_capacity(self.header.msg_len);
+        for chunk in &self.chunks {
+            buf.extend_from_slice(chunk.payload());
+        }
+        buf.freeze()
+    }
+}
 
 impl RtmpCodec {
     /// 创建一个新的 RTMP 编解码器
@@ -175,7 +223,8 @@ impl Decoder for RtmpCodec {
             csid,
             header: *header,
             payload_offset: offset,
-            raw_bytes: data
+            msg_complete: self.remaining_payload[csid] == 0,
+            raw_bytes: data.freeze()
         };
         Ok(Some(chunk))
     }
@@ -196,7 +245,7 @@ impl<S: AsyncReadExt + Unpin>  RtmpMessageStream<S> {
         let framed_chunk = FramedRead::new(s, codec);
         Self {
             framed_chunk,
-            payload: vec![None; 64],
+            chunks: vec![None; 64],
          }
     }
     
@@ -215,17 +264,18 @@ impl<S: AsyncReadExt + Unpin> Stream for RtmpMessageStream<S> {
             match opt {
                 Some(Ok(chunk)) => {
                     let csid = chunk.header.csid;
-                    if this.payload[csid].is_none() {
-                        this.payload[csid] = Some(BytesMut::with_capacity(chunk.header.msg_len));
+                    if this.chunks[csid].is_none() {
+                        this.chunks[csid] = Some(Vec::new());
                     }
-                    let payload = this.payload[csid].as_mut().unwrap();
-                    payload.extend_from_slice(chunk.payload());
+                    let chunks = this.chunks[csid].as_mut().unwrap();
+                    chunks.push(chunk);
+                    let chunk = chunks.last().unwrap();
 
-                    if payload.len() == chunk.header.msg_len {
+                    if chunk.msg_complete {
                         let msg = RtmpMessage {
                             csid: csid as u8,
                             header: chunk.header.into(),
-                            payload: this.payload[csid].take().unwrap(),
+                            chunks: this.chunks[csid].take().unwrap(),
                         };
                         return Poll::Ready(Some(Ok(msg)));
                     }
@@ -236,5 +286,117 @@ impl<S: AsyncReadExt + Unpin> Stream for RtmpMessageStream<S> {
         }
 
         Poll::Pending
+    }
+}
+
+impl RtmpMessageIter {
+    pub fn new_with_payload(
+        csid: u8,
+        timestamp: u32,
+        msg_type: u8,
+        stream_id: u32,
+        chunk_size: usize,
+        payload: &Bytes,
+    ) -> Self {
+        let header = RtmpMessageHeader {
+            timestamp,
+            msg_len: payload.len(),
+            msg_type,
+            stream_id,
+        };
+        Self {
+            csid: csid as usize,
+            header,
+            chunk_size,
+            payload: BytesMut::from(&payload[..]),
+            first: true,
+        }
+    }
+
+    pub fn new_with_msg(msg: &RtmpMessage, chunk_size: usize) -> Self {
+        let payload = msg.payload();
+        Self {
+            csid: msg.csid as usize,
+            header: msg.header.clone(),
+            chunk_size,
+            payload: payload.into(),
+            first: true,
+    }
+    }
+}
+
+
+impl Iterator for RtmpMessageIter {
+    type Item = RtmpChunk;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.payload.is_empty() {
+            return None;
+        }
+
+        /* ---------- payload split ---------- */
+        let payload_len = self.chunk_size.min(self.payload.len());
+        let payload = self.payload.split_to(payload_len);
+
+        let fmt = if self.first { 0 } else { 3 };
+        self.first = false;
+
+        /* ---------- timestamp ---------- */
+        let ts = self.header.timestamp;
+        let need_ext_ts = ts >= 0xFFFFFF;
+        let ts_field = if need_ext_ts { 0xFFFFFF } else { ts };
+
+        /* ---------- build raw bytes ---------- */
+        let mut buf = BytesMut::with_capacity(64 + payload_len);
+
+        /* ===== Basic Header ===== */
+        buf.put_u8((fmt << 6) | (self.csid as u8 & 0x3f));
+
+        /* ===== Message Header ===== */
+        if fmt < 3 {
+            // timestamp / timestamp delta
+            buf.put_u24(ts_field);
+
+            if fmt < 2 {
+                buf.put_u24(self.header.msg_len as u32);
+                buf.put_u8(self.header.msg_type);
+
+                if fmt == 0 {
+                    buf.put_u32_le(self.header.stream_id);
+                }
+            }
+        }
+
+        /* ===== Extended Timestamp ===== */
+        if need_ext_ts {
+            buf.put_u32(ts);
+        }
+
+        let payload_offset = buf.len();
+
+        /* ===== Chunk Data ===== */
+        buf.extend_from_slice(&payload);
+
+        let msg_complete = self.payload.is_empty();
+
+        Some(RtmpChunk {
+            fmt,
+            csid: self.csid as usize,
+            header: RtmpChunkHeader {
+                fmt,
+                csid: self.csid as usize,
+                timestamp: RtmpChunkTimestamp {
+                    absolute: ts,
+                    raw: ts_field,
+                    delta: false,
+                },
+                msg_len: self.header.msg_len,
+                msg_type: self.header.msg_type,
+                stream_id: self.header.stream_id,
+            },
+            payload_offset,
+            msg_complete,
+            raw_bytes: buf.freeze(),
+        })
     }
 }
