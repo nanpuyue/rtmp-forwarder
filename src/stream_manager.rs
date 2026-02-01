@@ -86,16 +86,16 @@ impl StreamManager {
         
         if let Some(s) = stream.as_mut() {
             if s.state == StreamState::Publishing {
-                let payload = msg.payload();
+                let payload_prefix = msg.first_chunk_payload();
                 match msg.header.msg_type {
                     18 | 15 => {
-                        s.metadata = Some(payload);
+                        s.metadata = Some(msg.payload());
                     }
-                    9 if payload.len() >= 2 && payload[0] == 0x17 && payload[1] == 0 => {
-                        s.video_seq_hdr = Some(payload);
+                    9 if payload_prefix.len() >= 2 && payload_prefix[0] == 0x17 && payload_prefix[1] == 0 => {
+                        s.video_seq_hdr = Some(msg.payload());
                     }
-                    8 if payload.len() >= 2 && (payload[0] >> 4) == 10 && payload[1] == 0 => {
-                        s.audio_seq_hdr = Some(payload);
+                    8 if payload_prefix.len() >= 2 && (payload_prefix[0] >> 4) == 10 && payload_prefix[1] == 0 => {
+                        s.audio_seq_hdr = Some(msg.payload());
                     }
                     _ => {}
                 }
