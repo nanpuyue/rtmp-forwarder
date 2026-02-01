@@ -39,7 +39,7 @@ impl ProtocolSnapshot {
     /// Inspect incoming messages and update the cached protocol state.
     /// This allows the forwarder to know the latest app/stream path at any time.
     pub fn update_from_message(&mut self, msg: &RtmpMessage) {
-        match msg.msg_type {
+        match msg.header.msg_type {
             // MetaData (onMetaData)
             18 | 15 => self.metadata = Some(msg.clone()),
             // Video sequence header (AVC/H264)
@@ -135,7 +135,7 @@ impl Forwarder {
                     self.snapshot.update_from_message(&msg);
                     
                     // Skip forwarding control commands as we replay our own handshake
-                    if msg.msg_type == 20 { continue; }
+                    if msg.header.msg_type == 20 { continue; }
 
                     // Try to establish connection with retry logic
                     if state.conn.is_none() && state.can_attempt() {
@@ -161,7 +161,7 @@ impl Forwarder {
                         if let Err(e) = write_rtmp_message(w, &msg, chunk_size).await {
                             error!("[{}] Write error: {}", self.config.addr, e);
                             state.conn = None;
-                        } else if msg.msg_type == 1 && msg.payload.len() >= 4 {
+                        } else if msg.header.msg_type == 1 && msg.payload.len() >= 4 {
                             // Sync output chunk size if destination requests change (via SetChunkSize)
                             chunk_size = u32::from_be_bytes(msg.payload[..4].try_into().unwrap()) as usize;
                         }
@@ -240,15 +240,15 @@ impl Forwarder {
 
         // 6. Sync initial state (MetaData + Sequence Headers) so the stream can be decoded instantly
         if let Some(ref m) = self.snapshot.metadata {
-            let mut m = m.clone(); m.timestamp = 0;
+            let mut m = m.clone(); m.header.timestamp = 0;
             write_rtmp_message(w, &m, 128).await.ok();
         }
         if let Some(ref v) = self.snapshot.video_seq_hdr {
-            let mut v = v.clone(); v.timestamp = 0;
+            let mut v = v.clone(); v.header.timestamp = 0;
             write_rtmp_message(w, &v, 128).await.ok();
         }
         if let Some(ref a) = self.snapshot.audio_seq_hdr {
-            let mut a = a.clone(); a.timestamp = 0;
+            let mut a = a.clone(); a.header.timestamp = 0;
             write_rtmp_message(w, &a, 128).await.ok();
         }
         Ok(())

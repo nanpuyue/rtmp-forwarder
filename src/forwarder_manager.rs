@@ -106,23 +106,29 @@ impl ForwarderManager {
             snapshot: crate::forwarder::ProtocolSnapshot {
                 metadata: snapshot.metadata.as_ref().map(|b| crate::rtmp::RtmpMessage {
                     csid: 3,
-                    timestamp: 0,
-                    msg_type: 18,
-                    stream_id: 1,
+                    header: crate::rtmp::RtmpMessageHeader {
+                        timestamp: 0,
+                        msg_type: 18,
+                        stream_id: 1,
+                    },
                     payload: bytes::BytesMut::from(b.as_ref()),
                 }),
                 video_seq_hdr: snapshot.video_seq_hdr.as_ref().map(|b| crate::rtmp::RtmpMessage {
                     csid: 4,
-                    timestamp: 0,
-                    msg_type: 9,
-                    stream_id: 1,
+                    header: crate::rtmp::RtmpMessageHeader {
+                        timestamp: 0,
+                        msg_type: 9,
+                        stream_id: 1,
+                    },
                     payload: bytes::BytesMut::from(b.as_ref()),
                 }),
                 audio_seq_hdr: snapshot.audio_seq_hdr.as_ref().map(|b| crate::rtmp::RtmpMessage {
                     csid: 5,
-                    timestamp: 0,
-                    msg_type: 8,
-                    stream_id: 1,
+                    header: crate::rtmp::RtmpMessageHeader {
+                        timestamp: 0,
+                        msg_type: 8,
+                        stream_id: 1,
+                    },
                     payload: bytes::BytesMut::from(b.as_ref()),
                 }),
                 client_app: Some(snapshot.app_name.clone()),
@@ -232,5 +238,5 @@ impl ForwarderManager {
 }
 
 fn should_forward(msg: &RtmpMessage) -> bool {
-    matches!(msg.msg_type, 8 | 9 | 18 | 15)
+    matches!(msg.header.msg_type, 8 | 9 | 18 | 15)
 }

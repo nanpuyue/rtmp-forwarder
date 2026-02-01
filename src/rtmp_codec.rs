@@ -2,22 +2,41 @@ use bytes::BytesMut;
 use tokio::io::AsyncReadExt;
 use tokio_stream::{Stream};
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
-use crate::rtmp::{RtmpMessage, RtmpHeader};
+use crate::rtmp::{RtmpMessage, RtmpMessageHeader};
 use std::{io, pin::Pin, task::{Context, Poll}};
 
 /// RTMP 编解码器，用于在异步流中编码和解码 RTMP 消息
 #[derive(Debug, Clone)]
 pub struct RtmpCodec {
     chunk_size: usize,
-    last_headers: Vec<Option<RtmpHeader>>,
+    last_headers: Vec<Option<RtmpChunkHeader>>,
     remaining_payload: Vec<usize>
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct ChunkTimestamp {
+    pub absolute: u32,
+    pub raw: u32,
+    pub delta: bool,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct RtmpChunkHeader {
+    pub fmt: u8,
+    pub csid: usize,
+    pub timestamp: ChunkTimestamp,
+    pub msg_len: usize,
+    pub msg_type: u8,
+    pub stream_id: u32,
 }
 
 #[derive(Debug)]
 pub struct  RtmpChunk {
-    pub header: RtmpHeader,
+    pub fmt: u8,
+    pub csid: usize,
+    pub header: RtmpChunkHeader,
     pub payload_offset: usize,
-    pub data: BytesMut,
+    pub raw_bytes: BytesMut,
 }
 
 pub struct RtmpMessageStream<S: AsyncReadExt + Unpin> {
@@ -25,9 +44,29 @@ pub struct RtmpMessageStream<S: AsyncReadExt + Unpin> {
     pub payload: Vec<Option<BytesMut>>,
 }
 
+impl ChunkTimestamp {
+    fn update(&mut self, raw: u32) {
+        if self.delta {
+           self.absolute = self.absolute.wrapping_add(raw)
+        } else {
+            self.absolute = raw;
+        }
+    }
+}
+
 impl RtmpChunk {
     pub fn payload(&self) -> &[u8] {
-        &self.data[self.payload_offset..]
+        &self.raw_bytes[self.payload_offset..]
+    }
+}
+
+impl From<RtmpChunkHeader> for RtmpMessageHeader {
+    fn from(ch: RtmpChunkHeader) -> Self {
+        Self {
+            timestamp: ch.timestamp.absolute,
+            msg_type: ch.msg_type,
+            stream_id: ch.stream_id,
+        }
     }
 }
 
@@ -76,27 +115,28 @@ impl Decoder for RtmpCodec {
 
         // 解析消息头
         let header = self.last_headers[csid].get_or_insert_default();
+        header.fmt = fmt;
         header.csid = csid;
         match fmt {
             0 => {
                 let mh = &src[1..12];
-                header.timestamp_is_delta = false;
-                header.timestamp_raw = u32::from_be_bytes([0, mh[0], mh[1], mh[2]]);
+                header.timestamp.delta = false;
+                header.timestamp.raw = u32::from_be_bytes([0, mh[0], mh[1], mh[2]]);
                 header.msg_len = u32::from_be_bytes([0, mh[3], mh[4], mh[5]]) as usize;
                 header.msg_type = mh[6];
                 header.stream_id = u32::from_le_bytes([mh[7], mh[8], mh[9], mh[10]]);
             }
             1 => {
                 let mh = &src[1..8];
-                header.timestamp_is_delta = true;
-                header.timestamp_raw = u32::from_be_bytes([0, mh[0], mh[1], mh[2]]);
+                header.timestamp.delta = true;
+                header.timestamp.raw = u32::from_be_bytes([0, mh[0], mh[1], mh[2]]);
                 header.msg_len = u32::from_be_bytes([0, mh[3], mh[4], mh[5]]) as usize;
                 header.msg_type = mh[6];
             }
             2 => {
                 let mh = &src[1..4];
-                header.timestamp_is_delta = true;
-                header.timestamp_raw = u32::from_be_bytes([0, mh[0], mh[1], mh[2]]);
+                header.timestamp.delta = true;
+                header.timestamp.raw = u32::from_be_bytes([0, mh[0], mh[1], mh[2]]);
             }
             3 => {}
             _ => unreachable!(),
@@ -104,20 +144,18 @@ impl Decoder for RtmpCodec {
         let mut offset = 1 + header_len;
 
         // 处理扩展时间戳
-        if header.timestamp_raw == 0xffffff {
+        let new_timestamp = if header.timestamp.raw == 0xffffff {
             if src.len() < offset + 4 {
                 return Ok(None);
             }
             let ext = &src[offset..offset + 4];
-            let timestamp_ext = u32::from_be_bytes([ext[0], ext[1], ext[2], ext[3]]);
-            header.timestamp = timestamp_ext;
             offset += 4;
-        } else if self.remaining_payload[csid] == 0 {
-            if header.timestamp_is_delta {
-                header.timestamp = header.timestamp.wrapping_add(header.timestamp_raw);
-            } else {
-                header.timestamp = header.timestamp_raw;
-            }
+            u32::from_be_bytes([ext[0], ext[1], ext[2], ext[3]])
+        } else {
+            header.timestamp.raw
+        };
+        if self.remaining_payload[csid] == 0 {
+            header.timestamp.update(new_timestamp);
         }
 
         // 计算当前 chunk 长度
@@ -133,9 +171,11 @@ impl Decoder for RtmpCodec {
         self.remaining_payload[csid] -= payload_len;
 
         let chunk = RtmpChunk {
+            fmt,
+            csid,
             header: *header,
             payload_offset: offset,
-            data
+            raw_bytes: data
         };
         Ok(Some(chunk))
     }
@@ -145,7 +185,7 @@ impl Encoder<RtmpChunk> for RtmpCodec {
     type Error = io::Error;
 
     fn encode(&mut self, chunk: RtmpChunk, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        dst.extend_from_slice(&chunk.data);
+        dst.extend_from_slice(&chunk.raw_bytes);
         Ok(())
     }
 }
@@ -184,9 +224,7 @@ impl<S: AsyncReadExt + Unpin> Stream for RtmpMessageStream<S> {
                     if payload.len() == chunk.header.msg_len {
                         let msg = RtmpMessage {
                             csid: csid as u8,
-                            timestamp: chunk.header.timestamp,
-                            msg_type: chunk.header.msg_type,
-                            stream_id: chunk.header.stream_id,
+                            header: chunk.header.into(),
                             payload: this.payload[csid].take().unwrap(),
                         };
                         return Poll::Ready(Some(Ok(msg)));
