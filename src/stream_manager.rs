@@ -86,7 +86,7 @@ impl StreamManager {
         
         if let Some(s) = stream.as_mut() {
             if s.state == StreamState::Publishing {
-                match msg.msg_type {
+                match msg.header.msg_type {
                     18 | 15 => {
                         s.metadata = Some(msg.payload.clone().freeze());
                     }

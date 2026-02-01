@@ -60,7 +60,7 @@ impl FlvManager {
                             // 检查是否为音频或视频的原始数据（不包含序列头）
                             // 音频: msg_type=8, payload[1] 是 AACPacketType (1=原始数据)
                             // 视频: msg_type=9, payload[1] 是 AVCPacketType (1=原始数据)
-                            let is_raw_data = (msg.msg_type == 8 || msg.msg_type == 9) 
+                            let is_raw_data = (msg.header.msg_type == 8 || msg.header.msg_type == 9) 
                                 && msg.payload.len() >= 2 
                                 && msg.payload[1] == 1;
                             if is_raw_data {
@@ -110,10 +110,10 @@ impl FlvManager {
     
     
     fn rtmp_to_flv(&self, msg: &RtmpMessage) -> Option<Bytes> {
-        match msg.msg_type {
-            8 => self.create_flv_audio_tag(&msg.payload.clone().freeze(), msg.timestamp),
-            9 => self.create_flv_video_tag(&msg.payload.clone().freeze(), msg.timestamp),
-            18 => self.create_flv_script_tag(&msg.payload.clone().freeze(), msg.timestamp),
+        match msg.header.msg_type {
+            8 => self.create_flv_audio_tag(&msg.payload.clone().freeze(), msg.header.timestamp),
+            9 => self.create_flv_video_tag(&msg.payload.clone().freeze(), msg.header.timestamp),
+            18 => self.create_flv_script_tag(&msg.payload.clone().freeze(), msg.header.timestamp),
             _ => None,
         }
     }
