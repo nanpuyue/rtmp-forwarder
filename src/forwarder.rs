@@ -170,13 +170,15 @@ impl Forwarder {
 
                     // Forward media data if connected
                     if let Some(ref mut w) = state.conn {
-                        if let Err(e) = write_rtmp_message(w, &msg, chunk_size).await {
-                            error!("[{}] Write error: {}", self.config.addr, e);
-                            state.conn = None;
-                        } else if msg.header.msg_type == 1 && msg.header.msg_len >= 4 {
+                        if msg.header.msg_type == 1 && msg.header.msg_len >= 4 {
                             // Sync output chunk size if destination requests change (via SetChunkSize)
                             chunk_size =
                                 u32::from_be_bytes(msg.payload()[..4].try_into().unwrap()) as usize;
+                        }
+
+                        if let Err(e) = write_rtmp_message(w, &msg, chunk_size).await {
+                            error!("[{}] Write error: {}", self.config.addr, e);
+                            state.conn = None;
                         }
                     }
                 }
