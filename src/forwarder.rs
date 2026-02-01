@@ -19,7 +19,6 @@ use crate::rtmp::write_rtmp_message;
 use crate::rtmp_codec::RtmpMessage;
 use crate::server::ForwarderConfig;
 use anyhow::Result;
-use bytes::Bytes;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
@@ -41,40 +40,41 @@ impl ProtocolSnapshot {
     /// Inspect incoming messages and update the cached protocol state.
     /// This allows the forwarder to know the latest app/stream path at any time.
     pub fn update_from_message(&mut self, msg: &RtmpMessage) {
-        todo!()
-        // match msg.header.msg_type {
-        //     // MetaData (onMetaData)
-        //     18 | 15 => self.metadata = Some(msg.clone()),
-        //     // Video sequence header (AVC/H264)
-        //     9 if msg.payload.len() >= 2 && msg.payload[0] == 0x17 && msg.payload[1] == 0 => {
-        //         self.video_seq_hdr = Some(msg.clone());
-        //     }
-        //     // Audio sequence header (AAC)
-        //     8 if msg.payload.len() >= 2 && (msg.payload[0] >> 4) == 10 && msg.payload[1] == 0 => {
-        //         self.audio_seq_hdr = Some(msg.clone());
-        //     }
-        //     // Control commands (peek for app/stream names)
-        //     20 => {
-        //         if let Ok(cmd) = amf_command_name(&msg.payload) {
-        //             let mut r = crate::amf::AmfReader::new(&msg.payload);
-        //             let _ = r.read_string(); // Skip command name
-        //             match cmd.as_str() {
-        //                 "connect" => {
-        //                     if let Ok(obj) = r.read_number().and_then(|_| r.read_object())
-        //                         && let Some((_, crate::amf::Amf0::String(s))) = obj.iter().find(|(k, _)| k == "app") {
-        //                             self.client_app = Some(s.clone());
-        //                         }
-        //                 }
-        //                 "publish" | "releaseStream" | "FCPublish" => {
-        //                     let _ = r.read_number().and_then(|_| r.read_null());
-        //                     if let Ok(s) = r.read_string() { self.client_stream = Some(s); }
-        //                 }
-        //                 _ => {}
-        //             }
-        //         }
-        //     }
-        //     _ => {}
-        // }
+        let payload_prefix = msg.first_chunk_payload();
+
+        match msg.header.msg_type {
+            // MetaData (onMetaData)
+            18 | 15 => self.metadata = Some(msg.clone()),
+            // Video sequence header (AVC/H264)
+            9 if payload_prefix.len() >= 2 && payload_prefix[0] == 0x17 && payload_prefix[1] == 0 => {
+                self.video_seq_hdr = Some(msg.clone());
+            }
+            // Audio sequence header (AAC)
+            8 if payload_prefix.len() >= 2 && (payload_prefix[0] >> 4) == 10 && payload_prefix[1] == 0 => {
+                self.audio_seq_hdr = Some(msg.clone());
+            }
+            // Control commands (peek for app/stream names)
+            20 => {
+                if let Ok(cmd) = amf_command_name(&payload_prefix) {
+                    let mut r = crate::amf::AmfReader::new(&payload_prefix);
+                    let _ = r.read_string(); // Skip command name
+                    match cmd.as_str() {
+                        "connect" => {
+                            if let Ok(obj) = r.read_number().and_then(|_| r.read_object())
+                                && let Some((_, crate::amf::Amf0::String(s))) = obj.iter().find(|(k, _)| k == "app") {
+                                    self.client_app = Some(s.clone());
+                                }
+                        }
+                        "publish" | "releaseStream" | "FCPublish" => {
+                            let _ = r.read_number().and_then(|_| r.read_null());
+                            if let Ok(s) = r.read_string() { self.client_stream = Some(s); }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -135,7 +135,7 @@ impl Forwarder {
             match event {
                 ForwardEvent::Message(msg) => {
                     // Update state even if we haven't connected yet
-                    // self.snapshot.update_from_message(&msg);
+                    self.snapshot.update_from_message(&msg);
 
                     // Skip forwarding control commands as we replay our own handshake
                     if msg.header.msg_type == 20 {

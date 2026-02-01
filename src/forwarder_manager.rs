@@ -1,6 +1,5 @@
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use crate::rtmp_codec::RtmpMessageHeader;
 use crate::stream_manager::{StreamManager, StreamMessage, StreamEvent, StreamSnapshot};
 use crate::forwarder::{ForwardEvent, Forwarder};
 use crate::server::ForwarderConfig;
@@ -96,53 +95,32 @@ impl ForwarderManager {
     async fn start_forwarder(
         &self,
         index: usize,
-        forwarder: &ForwarderConfig,
+        config: &ForwarderConfig,
         snapshot: &StreamSnapshot,
     ) -> mpsc::Sender<ForwardEvent> {
         let (tx, rx) = mpsc::channel(128);
         
-        // let actor = Forwarder {
-        //     config: forwarder.clone(),
-        //     rx,
-        //     snapshot: crate::forwarder::ProtocolSnapshot {
-        //         metadata: snapshot.metadata.as_ref().map(|b| RtmpMessage {
-        //             csid: 3,
-        //             header: RtmpMessageHeader {
-        //                 timestamp: 0,
-        //                 msg_len: b.len(),
-        //                 msg_type: 18,
-        //                 stream_id: 1,
-        //             },
-        //             payload: bytes::BytesMut::from(b.as_ref()),
-        //         }),
-        //         video_seq_hdr: snapshot.video_seq_hdr.as_ref().map(|b| RtmpMessage {
-        //             csid: 4,
-        //             header: RtmpMessageHeader {
-        //                 timestamp: 0,
-        //                 msg_len: b.len(),
-
-        //                 msg_type: 9,
-        //                 stream_id: 1,
-        //             },
-        //             payload: bytes::BytesMut::from(b.as_ref()),
-        //         }),
-        //         audio_seq_hdr: snapshot.audio_seq_hdr.as_ref().map(|b| RtmpMessage {
-        //             csid: 5,
-        //             header: RtmpMessageHeader {
-        //                 timestamp: 0,
-        //                 msg_type: 8,
-        //                 stream_id: 1,
-        //             },
-        //             payload: bytes::BytesMut::from(b.as_ref()),
-        //         }),
-        //         client_app: Some(snapshot.app_name.clone()),
-        //         client_stream: Some(snapshot.stream_key.clone()),
-        //     },
-        // };
+        let forwarder = Forwarder {
+            config: config.clone(),
+            rx,
+            snapshot: crate::forwarder::ProtocolSnapshot {
+                metadata: snapshot.metadata.as_ref().map(
+                    |b| RtmpMessage::new_with_payload(3, 0, 18, 1, 128, b)
+                ),
+                video_seq_hdr: snapshot.video_seq_hdr.as_ref().map(
+                    |b| RtmpMessage::new_with_payload(4, 0, 9, 1, 128, b)
+                ),
+                audio_seq_hdr: snapshot.audio_seq_hdr.as_ref().map(
+                    |b| RtmpMessage::new_with_payload(5, 0, 8, 1, 128, b)
+                ),
+                client_app: Some(snapshot.app_name.clone()),
+                client_stream: Some(snapshot.stream_key.clone()),
+            },
+        };
         
-        // tokio::spawn(actor.run());
-        info!("Started forwarder #{}: {}/{}/{}", index, forwarder.addr, 
-            forwarder.app.as_deref().unwrap_or(""), forwarder.stream.as_deref().unwrap_or(""));
+        tokio::spawn(forwarder.run());
+        info!("Started forwarder #{}: {}/{}/{}", index, config.addr, 
+            config.app.as_deref().unwrap_or(""), config.stream.as_deref().unwrap_or(""));
         tx
     }
     

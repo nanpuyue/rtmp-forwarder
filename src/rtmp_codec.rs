@@ -80,8 +80,8 @@ impl RtmpChunkTimestamp {
 }
 
 impl RtmpChunk {
-    pub fn payload(&self) -> &[u8] {
-        &self.raw_bytes[self.payload_offset..]
+    pub fn payload(&self) -> Bytes {
+        self.raw_bytes.slice(self.payload_offset..)
     }
 }
 
@@ -113,9 +113,13 @@ impl RtmpMessage {
     pub fn payload(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(self.header.msg_len);
         for chunk in &self.chunks {
-            buf.extend_from_slice(chunk.payload());
+            buf.extend_from_slice(&chunk.payload());
         }
         buf.freeze()
+    }
+
+    pub fn first_chunk_payload(&self) -> Bytes {
+        self.chunks.first().unwrap().payload()
     }
 }
 
