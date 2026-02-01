@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{RwLock, broadcast};
 use bytes::Bytes;
-use crate::rtmp::RtmpMessage;
+use crate::rtmp_codec::RtmpMessage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamState {
@@ -86,15 +86,16 @@ impl StreamManager {
         
         if let Some(s) = stream.as_mut() {
             if s.state == StreamState::Publishing {
+                let payload = msg.payload();
                 match msg.header.msg_type {
                     18 | 15 => {
-                        s.metadata = Some(msg.payload.clone().freeze());
+                        s.metadata = Some(payload);
                     }
-                    9 if msg.payload.len() >= 2 && msg.payload[0] == 0x17 && msg.payload[1] == 0 => {
-                        s.video_seq_hdr = Some(msg.payload.clone().freeze());
+                    9 if payload.len() >= 2 && payload[0] == 0x17 && payload[1] == 0 => {
+                        s.video_seq_hdr = Some(payload);
                     }
-                    8 if msg.payload.len() >= 2 && (msg.payload[0] >> 4) == 10 && msg.payload[1] == 0 => {
-                        s.audio_seq_hdr = Some(msg.payload.clone().freeze());
+                    8 if payload.len() >= 2 && (payload[0] >> 4) == 10 && payload[1] == 0 => {
+                        s.audio_seq_hdr = Some(payload);
                     }
                     _ => {}
                 }

@@ -1,10 +1,10 @@
 use crate::amf::amf_command_name;
 use crate::handshake::handshake_with_client;
-use crate::rtmp::{RtmpMessage, RtmpMessageHeader, write_rtmp_message};
+use crate::rtmp::write_rtmp_message2;
 use crate::rtmp_codec::RtmpMessageStream;
 use crate::stream_manager::{StreamManager, StreamError};
 use anyhow::Result;
-use bytes::BytesMut;
+use bytes::Bytes;
 use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
@@ -52,8 +52,9 @@ pub async fn handle_client(
         };
         // 提取app和stream信息
         if msg.header.msg_type == 20 {
-            if let Ok(cmd) = amf_command_name(&msg.payload) {
-                let mut r = crate::amf::AmfReader::new(&msg.payload);
+            let payload = msg.payload();
+            if let Ok(cmd) = amf_command_name(&payload) {
+                let mut r = crate::amf::AmfReader::new(&payload);
                 let _ = r.read_string();
                 match cmd.as_str() {
                     "connect" => {
@@ -72,13 +73,15 @@ pub async fn handle_client(
         }
 
         match msg.header.msg_type {
-            1 => if msg.payload.len() >= 4 {
-                c2s_chunk = u32::from_be_bytes(msg.payload[..4].try_into().unwrap()) as usize;
+            1 => if msg.header.msg_len >= 4 {
+                let payload = msg.payload();
+                c2s_chunk = u32::from_be_bytes(payload[..4].try_into().unwrap()) as usize;
                 msg_stream.set_chunk_size(c2s_chunk);
             }
             20 => {
-                if let Ok(cmd) = amf_command_name(&msg.payload) {
-                    let mut r = crate::amf::AmfReader::new(&msg.payload);
+                let payload = msg.payload();
+                if let Ok(cmd) = amf_command_name(&payload) {
+                    let mut r = crate::amf::AmfReader::new(&payload);
                     let _ = r.read_string(); // name
                     let tx_num = r.read_number().unwrap_or(0.0);
 
@@ -98,23 +101,17 @@ pub async fn handle_client(
                             }
                             
                             // Window Ack Size
-                            write_rtmp_message(&mut client_tx, &RtmpMessage {
-                                csid: 2,
-                                header: RtmpMessageHeader { timestamp: 0, msg_type: 5, stream_id: 0 },
-                                payload: BytesMut::from(&2500000u32.to_be_bytes()[..])
-                            }, s2c_chunk).await.ok();
+                            write_rtmp_message2(&mut client_tx, 2, 0, 5, 0,
+                                &Bytes::from(2500000u32.to_be_bytes().to_vec()), s2c_chunk
+                            ).await.ok();
                             // Peer Bandwidth
-                            write_rtmp_message(&mut client_tx, &RtmpMessage {
-                                csid: 2,
-                                header: RtmpMessageHeader { timestamp: 0, msg_type: 6, stream_id: 0 },
-                                payload: BytesMut::from(&[0x26, 0x25, 0xa0, 0x00, 0x02][..])
-                            }, s2c_chunk).await.ok();
+                            write_rtmp_message2(&mut client_tx, 2, 0, 6, 0,
+                                &Bytes::from(&[0x26, 0x25, 0xa0, 0x00, 0x02][..]), s2c_chunk
+                            ).await.ok();
                             // Set Chunk Size
-                            write_rtmp_message(&mut client_tx, &RtmpMessage {
-                                csid: 2,
-                                header: RtmpMessageHeader { timestamp: 0, msg_type: 1, stream_id: 0 },
-                                payload: BytesMut::from(&4096u32.to_be_bytes()[..])
-                            }, s2c_chunk).await.ok();
+                            write_rtmp_message2(&mut client_tx, 2, 0, 1, 0 ,
+                                &Bytes::from(4096u32.to_be_bytes().to_vec()), s2c_chunk
+                            ).await.ok();
                             s2c_chunk = 4096;
                             
                             // _result(connect)

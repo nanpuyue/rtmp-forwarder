@@ -4,7 +4,7 @@ use tokio::sync::broadcast;
 use bytes::{Bytes, BytesMut};
 use tokio::time::timeout;
 use crate::stream_manager::{StreamManager, StreamMessage, StreamSnapshot};
-use crate::rtmp::RtmpMessage;
+use crate::rtmp_codec::RtmpMessage;
 use tracing::info;
 
 pub struct FlvManager {
@@ -60,9 +60,10 @@ impl FlvManager {
                             // 检查是否为音频或视频的原始数据（不包含序列头）
                             // 音频: msg_type=8, payload[1] 是 AACPacketType (1=原始数据)
                             // 视频: msg_type=9, payload[1] 是 AVCPacketType (1=原始数据)
+                            let payload = msg.payload();
                             let is_raw_data = (msg.header.msg_type == 8 || msg.header.msg_type == 9) 
-                                && msg.payload.len() >= 2 
-                                && msg.payload[1] == 1;
+                                && payload.len() >= 2 
+                                && payload[1] == 1;
                             if is_raw_data {
                                 // 收到第一个媒体数据，说明RTMP流已经发送过序列头
                                 snapshot = self.stream_manager.get_stream_snapshot().await;
@@ -111,9 +112,9 @@ impl FlvManager {
     
     fn rtmp_to_flv(&self, msg: &RtmpMessage) -> Option<Bytes> {
         match msg.header.msg_type {
-            8 => self.create_flv_audio_tag(&msg.payload.clone().freeze(), msg.header.timestamp),
-            9 => self.create_flv_video_tag(&msg.payload.clone().freeze(), msg.header.timestamp),
-            18 => self.create_flv_script_tag(&msg.payload.clone().freeze(), msg.header.timestamp),
+            8 => self.create_flv_audio_tag(&msg.payload(), msg.header.timestamp),
+            9 => self.create_flv_video_tag(&msg.payload(), msg.header.timestamp),
+            18 => self.create_flv_script_tag(&msg.payload(), msg.header.timestamp),
             _ => None,
         }
     }
