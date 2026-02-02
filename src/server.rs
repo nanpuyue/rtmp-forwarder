@@ -91,8 +91,11 @@ pub async fn handle_client(
                 let payload = msg.payload();
                 let c2s_chunk = u32::from_be_bytes(payload[..4].try_into().unwrap()) as usize;
                 msg_stream.set_chunk_size(c2s_chunk);
-                info!("Client {client_id} set chunk size to {c2s_chunk}");
+                if let Some(stream) = stream.as_mut() {
+                    stream.chunk_szie = c2s_chunk;
+                }
                 stream_manager.handle_set_chunk_size(client_id, c2s_chunk).await;
+                info!("Client {client_id} set chunk size to {c2s_chunk}");
             }
             20 => {
                 let payload = msg.payload();

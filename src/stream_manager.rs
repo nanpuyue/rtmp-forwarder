@@ -29,6 +29,7 @@ pub enum StreamMessage {
 
 #[derive(Clone)]
 pub struct StreamSnapshot {
+    pub chunk_size: usize,
     pub app_name: Option<String>,
     pub stream_key: Option<String>,
     pub metadata: Option<Bytes>,
@@ -50,24 +51,6 @@ pub struct StreamInfo {
     pub video_seq_hdr: Option<Bytes>,
     pub audio_seq_hdr: Option<Bytes>,
     pub orig_dest_addr: Option<String>,
-}
-
-impl Default for StreamInfo {
-    fn default() -> Self {
-        Self {
-            stream_id: 1,
-            client_id: 0,
-            app_name: None,
-            stream_key: None,
-            state: StreamState::None,
-            last_active: Instant::now(),
-            chunk_szie: 128,
-            metadata: None,
-            video_seq_hdr: None,
-            audio_seq_hdr: None,
-            orig_dest_addr: None,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -132,6 +115,7 @@ impl StreamManager {
         stream.as_ref()
             .filter(|s| s.state == StreamState::Publishing)
             .map(|s| StreamSnapshot {
+                chunk_size: s.chunk_szie,
                 app_name: s.app_name.clone(),
                 stream_key: s.stream_key.clone(),
                 metadata: s.metadata.clone(),
