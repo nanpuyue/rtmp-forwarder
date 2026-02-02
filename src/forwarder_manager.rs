@@ -113,8 +113,8 @@ impl ForwarderManager {
                 audio_seq_hdr: snapshot.audio_seq_hdr.as_ref().map(
                     |b| RtmpMessage::new_with_payload(5, 0, 8, 1, 4096, b)
                 ),
-                client_app: Some(snapshot.app_name.clone()),
-                client_stream: Some(snapshot.stream_key.clone()),
+                client_app: snapshot.app_name.clone(),
+                client_stream: snapshot.stream_key.clone(),
             },
         };
         
