@@ -27,7 +27,7 @@ pub enum StreamMessage {
     StateChanged(StreamEvent),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StreamSnapshot {
     pub chunk_size: usize,
     pub app_name: Option<String>,
