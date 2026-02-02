@@ -33,8 +33,6 @@ pub struct RtmpChunkHeader {
 
 #[derive(Clone, Debug)]
 pub struct  RtmpChunk {
-    pub fmt: u8,
-    pub csid: usize,
     pub header: RtmpChunkHeader,
     pub payload_offset: usize,
     pub msg_complete: bool,
@@ -224,8 +222,6 @@ impl Decoder for RtmpCodec {
         self.remaining_payload[csid] -= payload_len;
 
         let chunk = RtmpChunk {
-            fmt,
-            csid,
             header: *header,
             payload_offset: offset,
             msg_complete: self.remaining_payload[csid] == 0,
@@ -386,8 +382,6 @@ impl Iterator for RtmpMessageIter {
         let msg_complete = self.payload.is_empty();
 
         Some(RtmpChunk {
-            fmt,
-            csid: self.csid as usize,
             header: RtmpChunkHeader {
                 fmt,
                 csid: self.csid as usize,
