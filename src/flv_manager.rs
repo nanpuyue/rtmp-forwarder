@@ -60,7 +60,7 @@ impl FlvManager {
                             // 检查是否为音频或视频的原始数据（不包含序列头）
                             // 音频: msg_type=8, payload[1] 是 AACPacketType (1=原始数据)
                             // 视频: msg_type=9, payload[1] 是 AVCPacketType (1=原始数据)
-                            let payload = msg.payload();
+                            let payload = msg.first_chunk_payload();
                             let is_raw_data = (msg.header.msg_type == 8 || msg.header.msg_type == 9) 
                                 && payload.len() >= 2 
                                 && payload[1] == 1;
@@ -112,9 +112,9 @@ impl FlvManager {
     
     fn rtmp_to_flv(&self, msg: &RtmpMessage) -> Option<Bytes> {
         match msg.header.msg_type {
-            8 => self.create_flv_audio_tag(&msg.payload(), msg.header.timestamp),
-            9 => self.create_flv_video_tag(&msg.payload(), msg.header.timestamp),
-            18 => self.create_flv_script_tag(&msg.payload(), msg.header.timestamp),
+            8 => Some(self.create_flv_audio_tag(&msg.payload(), msg.header.timestamp)),
+            9 => Some(self.create_flv_video_tag(&msg.payload(), msg.header.timestamp)),
+            18 => Some(self.create_flv_script_tag(&msg.payload(), msg.header.timestamp)),
             _ => None,
         }
     }
@@ -141,16 +141,15 @@ impl FlvManager {
         if let Some(snapshot) = snapshot {
             // 添加视频序列头（假设一定有视频序列头）
             if let Some(ref video_hdr) = snapshot.video_seq_hdr {
-                if let Some(flv_tag) = self.create_flv_video_tag(video_hdr, 0) {
-                    header_data.extend_from_slice(&flv_tag);
-                }
+                let flv_tag = self.create_flv_video_tag(video_hdr, 0);
+                header_data.extend_from_slice(&flv_tag);
+                
                 
                 // 只有在有视频头的情况下才处理音频头或设置音频标记位
                 if let Some(ref audio_hdr) = snapshot.audio_seq_hdr {
                     // 有视频头和音频头
-                    if let Some(flv_tag) = self.create_flv_audio_tag(audio_hdr, 0) {
-                        header_data.extend_from_slice(&flv_tag);
-                    }
+                    let flv_tag = self.create_flv_audio_tag(audio_hdr, 0);
+                    header_data.extend_from_slice(&flv_tag);
                 } else {
                     // 有视频头但无音频头，将音频标记位设为0，只保留视频标记 (bit 0 = 1)
                     header_data[4] = 1;
@@ -161,19 +160,19 @@ impl FlvManager {
         header_data
     }
     
-    fn create_flv_audio_tag(&self, data: &Bytes, timestamp: u32) -> Option<Bytes> {
+    fn create_flv_audio_tag(&self, data: &Bytes, timestamp: u32) -> Bytes {
         self.create_flv_tag(8, data, timestamp)
     }
     
-    fn create_flv_video_tag(&self, data: &Bytes, timestamp: u32) -> Option<Bytes> {
+    fn create_flv_video_tag(&self, data: &Bytes, timestamp: u32) -> Bytes {
         self.create_flv_tag(9, data, timestamp)
     }
     
-    fn create_flv_script_tag(&self, data: &Bytes, timestamp: u32) -> Option<Bytes> {
+    fn create_flv_script_tag(&self, data: &Bytes, timestamp: u32) -> Bytes {
         self.create_flv_tag(18, data, timestamp)
     }
     
-    fn create_flv_tag(&self, tag_type: u8, data: &Bytes, timestamp: u32) -> Option<Bytes> {
+    fn create_flv_tag(&self, tag_type: u8, data: &Bytes, timestamp: u32) -> Bytes {
         let data_size = data.len() as u32;
         let mut buf = Vec::with_capacity(11 + data.len() + 4);
         
@@ -185,6 +184,6 @@ impl FlvManager {
         buf.extend_from_slice(data);
         buf.extend_from_slice(&(11 + data_size).to_be_bytes());
         
-        Some(Bytes::from(buf))
+        Bytes::from(buf)
     }
 }
