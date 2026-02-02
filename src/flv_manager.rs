@@ -29,7 +29,7 @@ impl FlvManager {
         while let Ok(stream_msg) = msg_rx.recv().await {
             if let StreamMessage::RtmpMessage(msg) = stream_msg {
                 if let Some(flv_data) = self.rtmp_to_flv(&msg) {
-                    self.broadcast_flv("stream", flv_data).await;
+                    self.broadcast_flv(flv_data).await;
                 }
             }
         }
@@ -37,12 +37,12 @@ impl FlvManager {
         info!("FlvManager stopped");
     }
     
-    async fn broadcast_flv(&self, _stream_name: &str, data: Bytes) {
+    async fn broadcast_flv(&self, data: Bytes) {
         // 直接使用广播通道发送数据
         let _ = self.broadcast_tx.send(data);
     }
     
-    pub async fn subscribe_flv(&self, _stream_name: &str) -> (broadcast::Receiver<Bytes>, Bytes) {
+    pub async fn subscribe_flv(&self) -> (broadcast::Receiver<Bytes>, Bytes) {
         // 先获取一次快照检查
         let mut snapshot = self.stream_manager.get_stream_snapshot().await;
         

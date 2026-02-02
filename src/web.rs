@@ -3,7 +3,7 @@ use axum::{
     routing::{get, post},
     Json, Router, Extension,
     http::{header, StatusCode, Uri},
-    extract::{Path, ws::{WebSocket, WebSocketUpgrade}},
+    extract::ws::{WebSocket, WebSocketUpgrade},
     body::Body,
 };
 use std::net::SocketAddr;
@@ -36,7 +36,7 @@ pub async fn start_web_server(
     let app = Router::new()
         .route("/api/config", get(get_config))
         .route("/api/config", post(update_config))
-        .route("/live/:stream_id.flv", get(handle_flv_stream))
+        .route("/live/stream.flv", get(handle_flv_stream))
         .route("/ws/stream-status", get(ws_handler))
         .fallback(static_handler)
         .layer(Extension(config))
@@ -108,13 +108,12 @@ async fn update_config(
 }
 
 pub async fn handle_flv_stream(
-    Path(_stream_id): Path<String>,
     Extension(manager): Extension<Arc<FlvManager>>,
 ) -> impl IntoResponse {
     tracing::info!("HTTP-FLV: Request for stream");
     
     // 获取广播通道订阅者和头部数据
-    let (rx, header_data) = manager.subscribe_flv("stream").await;
+    let (rx, header_data) = manager.subscribe_flv().await;
     // 创建一个流，先发送头部信息
     let header_stream = tokio_stream::iter(vec![Ok::<Bytes, std::convert::Infallible>(header_data)]);
     // 创建剩余数据流
