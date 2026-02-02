@@ -98,20 +98,22 @@ impl ForwarderManager {
         config: &ForwarderConfig,
         snapshot: &StreamSnapshot,
     ) -> mpsc::Sender<ForwardEvent> {
+        let chunk_size = snapshot.chunk_size;
         let (tx, rx) = mpsc::channel(128);
         
         let forwarder = Forwarder {
+            chunk_size,
             config: config.clone(),
             rx,
             snapshot: crate::forwarder::ProtocolSnapshot {
                 metadata: snapshot.metadata.as_ref().map(
-                    |b| RtmpMessage::new_with_payload(3, 0, 18, 1, 4096, b)
+                    |b| RtmpMessage::new_with_payload(3, 0, 18, 1, chunk_size, b)
                 ),
                 video_seq_hdr: snapshot.video_seq_hdr.as_ref().map(
-                    |b| RtmpMessage::new_with_payload(4, 0, 9, 1, 4096, b)
+                    |b| RtmpMessage::new_with_payload(4, 0, 9, 1, chunk_size, b)
                 ),
                 audio_seq_hdr: snapshot.audio_seq_hdr.as_ref().map(
-                    |b| RtmpMessage::new_with_payload(5, 0, 8, 1, 4096, b)
+                    |b| RtmpMessage::new_with_payload(5, 0, 8, 1, chunk_size, b)
                 ),
                 client_app: snapshot.app_name.clone(),
                 client_stream: snapshot.stream_key.clone(),

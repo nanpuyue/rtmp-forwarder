@@ -22,7 +22,7 @@ use anyhow::Result;
 use bytes::Bytes;
 use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, tcp};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -86,7 +86,7 @@ pub enum ForwardEvent {
 
 /// Retry state for connection attempts
 struct ConnectionState {
-    conn: Option<tokio::net::tcp::OwnedWriteHalf>,
+    conn: Option<tcp::OwnedWriteHalf>,
     failure: u32,
     last_attempt: Option<Instant>,
 }
@@ -119,6 +119,7 @@ impl ConnectionState {
 /// Forwarder handles forwarding to a single forwarder server.
 /// It runs in its own task to isolate client from destination network issues.
 pub struct Forwarder {
+    pub chunk_size: usize,
     pub config: ForwarderConfig,
     pub rx: mpsc::Receiver<ForwardEvent>,
     pub snapshot: ProtocolSnapshot,
@@ -128,7 +129,6 @@ impl Forwarder {
     /// Main loop for the forwarder task.
     pub async fn run(mut self) {
         let mut state = ConnectionState::new();
-        let mut chunk_size = 4096;
 
         info!("Forwarder [{}] started", self.config.addr);
 
@@ -171,15 +171,15 @@ impl Forwarder {
 
                     // Forward media data if connected
                     if let Some(ref mut w) = state.conn {
-                        if msg.header.msg_type == 1 && msg.header.msg_len >= 4 {
-                            // Sync output chunk size if destination requests change (via SetChunkSize)
-                            chunk_size =
-                                u32::from_be_bytes(msg.payload()[..4].try_into().unwrap()) as usize;
-                        }
-
-                        if let Err(e) = write_rtmp_message(w, &msg, chunk_size).await {
+                        if let Err(e) = write_rtmp_message(w, &msg, self.chunk_size).await {
                             error!("[{}] Write error: {}", self.config.addr, e);
                             state.conn = None;
+                        }
+
+                        // Sync output chunk size if destination requests change (via SetChunkSize)
+                        if msg.header.msg_type == 1 && msg.header.msg_len >= 4 {
+                            self.chunk_size =
+                                u32::from_be_bytes(msg.payload()[..4].try_into().unwrap()) as usize;
                         }
                     }
                 }
@@ -195,50 +195,36 @@ impl Forwarder {
     }
 
     /// Attempt to connect and perform RTMP handshake + setup.
-    async fn try_connect(&self) -> Option<tokio::net::tcp::OwnedWriteHalf> {
-        // Decide which app/stream names to use (priority: config override > client original)
-        let app = self
-            .config
-            .app
-            .as_deref()
-            .or(self.snapshot.client_app.as_deref());
-        let stream = self
-            .config
-            .stream
-            .as_deref()
-            .or(self.snapshot.client_stream.as_deref());
+    async fn try_connect(&self) -> Option<tcp::OwnedWriteHalf> {
+        let mut addr = self.config.addr.clone();
+        if !addr.contains(':') {
+            addr.push_str(":1935");
+        }
 
-        if let (Some(a), Some(s)) = (app, stream) {
-            let mut addr = self.config.addr.clone();
-            if !addr.contains(':') {
-                addr.push_str(":1935");
-            }
+        // Connect to forwarder destination
+        if let Ok(Ok(mut socket)) =
+            tokio::time::timeout(std::time::Duration::from_secs(3), TcpStream::connect(&addr))
+                .await
+        {
+            socket.set_nodelay(true).ok();
 
-            // Connect to forwarder destination
-            if let Ok(Ok(mut socket)) =
-                tokio::time::timeout(std::time::Duration::from_secs(3), TcpStream::connect(&addr))
-                    .await
-            {
-                socket.set_nodelay(true).ok();
+            // Step 0: C0+C1 -> S0+S1+S2 -> C2
+            if handshake_with_server(&mut socket).await.is_ok() {
+                let (mut r, mut w) = socket.into_split();
 
-                // Step 0: C0+C1 -> S0+S1+S2 -> C2
-                if handshake_with_server(&mut socket).await.is_ok() {
-                    let (mut r, mut w) = socket.into_split();
-
-                    // Spawn a background task to drain anything sent from destination to us
-                    tokio::spawn(async move {
-                        let mut buf = [0u8; 1024];
-                        while let Ok(n) = r.read(&mut buf).await {
-                            if n == 0 {
-                                break;
-                            }
+                // Spawn a background task to drain anything sent from destination to us
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    while let Ok(n) = r.read(&mut buf).await {
+                        if n == 0 {
+                            break;
                         }
-                    });
-
-                    // Perform RTMP command sequence (Connect -> Publish)
-                    if self.setup_protocol(&mut w, a, s).await.is_ok() {
-                        return Some(w);
                     }
+                });
+
+                // Perform RTMP command sequence (Connect -> Publish)
+                if self.setup_protocol(&mut w).await.is_ok() {
+                    return Some(w);
                 }
             }
         }
@@ -248,10 +234,21 @@ impl Forwarder {
     /// Perform the standard RTMP publishing command sequence.
     async fn setup_protocol(
         &self,
-        w: &mut tokio::net::tcp::OwnedWriteHalf,
-        app: &str,
-        stream: &str,
+        w: &mut tcp::OwnedWriteHalf,
     ) -> Result<()> {
+        let app = self
+            .config
+            .app
+            .as_deref()
+            .or(self.snapshot.client_app.as_deref())
+            .unwrap_or_default();
+        let stream = self
+            .config
+            .stream
+            .as_deref()
+            .or(self.snapshot.client_stream.as_deref())
+            .unwrap_or_default();
+
         // 1. connect
         info!(
             "c->u [{}]: setup: app=\"{}\" client=\"{}\"",
@@ -279,10 +276,11 @@ impl Forwarder {
         )
         .await?;
 
-        // 设置 chunk size 为 4096
+        // 设置 chunk size
         crate::rtmp::write_rtmp_message2(w, 3, 0, 1, 0 ,
-            &Bytes::from(4096u32.to_be_bytes().to_vec()), 128
-        ).await.ok();
+            &Bytes::from((self.chunk_size as u32).to_be_bytes().to_vec()), 128
+        ).await?;
+        info!("c->u [{}]: set chunk size to {}", self.config.addr, self.chunk_size);
 
         // 2-3. releaseStream and FCPublish are required by many standard servers (like Nginx-RTMP)
         for (cmd, tx) in [("releaseStream", 2.0), ("FCPublish", 3.0)] {
@@ -290,7 +288,7 @@ impl Forwarder {
                 w,
                 3,
                 0,
-                4096,
+                self.chunk_size,
                 cmd,
                 tx,
                 &[],
@@ -300,7 +298,7 @@ impl Forwarder {
         }
 
         // 4. Create the logical stream
-        crate::rtmp::send_rtmp_command(w, 3, 0, 4096, "createStream", 4.0, &[], &[]).await?;
+        crate::rtmp::send_rtmp_command(w, 3, 0, self.chunk_size, "createStream", 4.0, &[], &[]).await?;
 
         // 5. Start publishing as "live"
         info!(
@@ -311,7 +309,7 @@ impl Forwarder {
             w,
             3,
             1,
-            4096,
+            self.chunk_size,
             "publish",
             5.0,
             &[],
@@ -326,22 +324,22 @@ impl Forwarder {
         if let Some(ref m) = self.snapshot.metadata {
             let mut m = m.clone();
             m.header.timestamp = 0;
-            write_rtmp_message(w, &m, 4096).await.ok();
+            write_rtmp_message(w, &m, self.chunk_size).await.ok();
         }
         if let Some(ref v) = self.snapshot.video_seq_hdr {
             let mut v = v.clone();
             v.header.timestamp = 0;
-            write_rtmp_message(w, &v, 4096).await.ok();
+            write_rtmp_message(w, &v, self.chunk_size).await.ok();
         }
         if let Some(ref a) = self.snapshot.audio_seq_hdr {
             let mut a = a.clone();
             a.header.timestamp = 0;
-            write_rtmp_message(w, &a, 4096).await.ok();
+            write_rtmp_message(w, &a, self.chunk_size).await.ok();
         }
         Ok(())
     }
 
-    async fn graceful_shutdown(&self, w: &mut tokio::net::tcp::OwnedWriteHalf) {
+    async fn graceful_shutdown(&self, w: &mut tcp::OwnedWriteHalf) {
         if let (Some(_app), Some(stream)) = (
             self.config
                 .app
@@ -361,7 +359,7 @@ impl Forwarder {
                 w,
                 3,
                 1,
-                4096,
+                self.chunk_size,
                 "FCUnpublish",
                 6.0,
                 &[],
@@ -374,7 +372,7 @@ impl Forwarder {
                 w,
                 3,
                 1,
-                4096,
+                self.chunk_size,
                 "deleteStream",
                 7.0,
                 &[],
