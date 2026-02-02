@@ -1,4 +1,5 @@
 #![feature(random)]
+#![feature(if_let_guard)]
 
 mod amf;
 mod config;
