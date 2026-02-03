@@ -1,8 +1,11 @@
+use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use bytes::{BufMut, Bytes, BytesMut};
-use tokio::io::AsyncReadExt;
-use tokio_stream::{Stream};
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio_stream::Stream;
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
-use std::{io, pin::Pin, task::{Context, Poll}};
 
 use crate::rtmp::PutU24;
 
@@ -11,7 +14,7 @@ use crate::rtmp::PutU24;
 pub struct RtmpCodec {
     chunk_size: usize,
     last_headers: Vec<Option<RtmpChunkHeader>>,
-    remaining_payload: Vec<usize>
+    remaining_payload: Vec<usize>,
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -32,7 +35,7 @@ pub struct RtmpChunkHeader {
 }
 
 #[derive(Clone, Debug)]
-pub struct  RtmpChunk {
+pub struct RtmpChunk {
     pub header: RtmpChunkHeader,
     pub payload_offset: usize,
     pub msg_complete: bool,
@@ -71,7 +74,7 @@ pub struct RtmpMessageStream<S: AsyncReadExt + Unpin> {
 impl RtmpChunkTimestamp {
     fn update(&mut self, raw: u32) {
         if self.delta {
-           self.absolute = self.absolute.wrapping_add(raw)
+            self.absolute = self.absolute.wrapping_add(raw)
         } else {
             self.absolute = raw;
         }
@@ -102,11 +105,26 @@ impl RtmpMessage {
         msg_type: u8,
         stream_id: u32,
         chunk_size: usize,
-        payload: &Bytes
+        payload: &Bytes,
     ) -> Self {
-        let header = RtmpMessageHeader { timestamp, msg_len: payload.len(), msg_type, stream_id };
-        let chunks = RtmpMessageIter::new_with_payload(csid, timestamp, msg_type, stream_id, chunk_size, payload).collect();
-        Self { csid, header, chunk_size, chunks }
+        let header = RtmpMessageHeader {
+            timestamp,
+            msg_len: payload.len(),
+            msg_type,
+            stream_id,
+        };
+
+        let chunks = RtmpMessageIter::new_with_payload(
+            csid, timestamp, msg_type, stream_id, chunk_size, payload,
+        )
+        .collect();
+
+        Self {
+            csid,
+            header,
+            chunk_size,
+            chunks,
+        }
     }
 
     pub fn payload(&self) -> Bytes {
@@ -123,9 +141,8 @@ impl RtmpMessage {
 }
 
 impl RtmpCodec {
-    /// 创建一个新的 RTMP 编解码器
     pub fn new(chunk_size: usize) -> Self {
-        Self{
+        Self {
             chunk_size,
             last_headers: vec![None; 64],
             remaining_payload: vec![0; 64],
@@ -149,7 +166,10 @@ impl Decoder for RtmpCodec {
         let fmt = src[0] >> 6;
         let csid = (src[0] & 0x3f) as usize;
         if csid == 0 || csid == 1 {
-            return Err(io::Error::new( io::ErrorKind::InvalidData, "Extended CSID not supported"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Extended CSID not supported",
+            ));
         }
 
         // 确保有足够的数据读取消息头
@@ -158,7 +178,12 @@ impl Decoder for RtmpCodec {
             1 => 7,  // 1 + 7 字节
             2 => 3,  // 1 + 3 字节
             3 => 0,  // 只有基本 header
-            _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid RTMP format")),
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Invalid RTMP format",
+                ));
+            }
         };
         if src.len() < 1 + header_len {
             return Ok(None);
@@ -225,7 +250,7 @@ impl Decoder for RtmpCodec {
             header: *header,
             payload_offset: offset,
             msg_complete: self.remaining_payload[csid] == 0,
-            raw_bytes: data.freeze()
+            raw_bytes: data.freeze(),
         };
         Ok(Some(chunk))
     }
@@ -240,22 +265,22 @@ impl Encoder<RtmpChunk> for RtmpCodec {
     }
 }
 
-impl<S: AsyncReadExt + Unpin>  RtmpMessageStream<S> {
+impl<S: AsyncRead + Unpin> RtmpMessageStream<S> {
     pub fn new(s: S, chunk_size: usize) -> Self {
         let codec = RtmpCodec::new(chunk_size);
         let framed_chunk = FramedRead::new(s, codec);
         Self {
             framed_chunk,
             chunks: vec![None; 64],
-         }
+        }
     }
-    
+
     pub fn set_chunk_size(&mut self, size: usize) {
         self.framed_chunk.decoder_mut().set_chunk_size(size);
     }
 }
 
-impl<S: AsyncReadExt + Unpin> Stream for RtmpMessageStream<S> {
+impl<S: AsyncRead + Unpin> Stream for RtmpMessageStream<S> {
     type Item = Result<RtmpMessage, io::Error>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
@@ -323,10 +348,9 @@ impl RtmpMessageIter {
             chunk_size,
             payload: payload.into(),
             first: true,
-    }
+        }
     }
 }
-
 
 impl Iterator for RtmpMessageIter {
     type Item = RtmpChunk;

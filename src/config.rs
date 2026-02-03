@@ -1,7 +1,9 @@
-use serde::{Deserialize, Serialize};
-use std::sync::{Arc, RwLock};
 use std::fs;
-use anyhow::{Result, Context};
+use std::sync::{Arc, RwLock};
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+
 use crate::server::ForwarderConfig;
 
 pub type SharedConfig = Arc<RwLock<AppConfig>>;
@@ -58,7 +60,8 @@ impl AppConfig {
     /// Save configuration to file
     pub fn save(&mut self) -> Result<()> {
         let content = serde_json::to_string_pretty(self)?;
-        fs::write(&self.config_path, content).context(format!("failed to write config file: {}", self.config_path))?;
+        fs::write(&self.config_path, content)
+            .context(format!("failed to write config file: {}", self.config_path))?;
         Ok(())
     }
 
@@ -71,8 +74,10 @@ impl AppConfig {
     }
 
     pub fn load(path: &str) -> Result<AppConfig> {
-        let content = fs::read_to_string(path).context(format!("Failed to read config file: {}", path))?;
-        let mut config: AppConfig = serde_json::from_str(&content).context("Failed to parse config JSON")?;
+        let content =
+            fs::read_to_string(path).context(format!("Failed to read config file: {}", path))?;
+        let mut config: AppConfig =
+            serde_json::from_str(&content).context("Failed to parse config JSON")?;
         config.config_path = path.to_string();
         Ok(config)
     }
@@ -82,12 +87,15 @@ impl GetForwarders for WebConfig {
     fn get_forwarders(&self) -> Vec<ForwarderConfig> {
         let mut forwarders = self.forwarders.clone();
         // Always insert relay config to keep forwarder indices stable
-        forwarders.insert(0, ForwarderConfig {
-            addr: self.relay_addr.clone(),
-            app: None,
-            stream: None,
-            enabled: self.relay_enabled,
-        });
+        forwarders.insert(
+            0,
+            ForwarderConfig {
+                addr: self.relay_addr.clone(),
+                app: None,
+                stream: None,
+                enabled: self.relay_enabled,
+            },
+        );
         forwarders
     }
 }

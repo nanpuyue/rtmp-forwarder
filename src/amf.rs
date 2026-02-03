@@ -1,9 +1,8 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bytes::{BufMut, BytesMut};
 use tracing::trace;
 
 /* ================= AMF0 ================= */
-
 
 // Peek AMF0 command name without mutating the original slice
 pub fn amf_command_name(payload: &[u8]) -> Result<String> {
@@ -99,7 +98,8 @@ pub fn amf_write_value(b: &mut BytesMut, v: &Amf0) {
         Amf0::Number(n) => amf_write_number(b, *n),
         Amf0::Boolean(flag) => amf_write_boolean(b, *flag),
         Amf0::Object(obj) => {
-            let items: Vec<(&str, Amf0)> = obj.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+            let items: Vec<(&str, Amf0)> =
+                obj.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
             amf_write_object(b, &items);
         }
     }

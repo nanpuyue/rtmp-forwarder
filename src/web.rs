@@ -1,24 +1,24 @@
-use axum::{
-    response::{IntoResponse, Response},
-    routing::{get, post},
-    Json, Router, Extension,
-    http::{header, StatusCode, Uri},
-    extract::ws::{WebSocket, WebSocketUpgrade},
-    body::Body,
-};
 use std::net::SocketAddr;
+use std::sync::Arc;
+
+use axum::body::Body;
+use axum::extract::ws::{WebSocket, WebSocketUpgrade};
+use axum::http::{StatusCode, Uri, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Extension, Json, Router};
+use bytes::Bytes;
+use rust_embed::RustEmbed;
+use tokio::sync::mpsc;
+use tokio_stream::StreamExt;
+use tokio_stream::wrappers::BroadcastStream;
+use tower_http::cors::CorsLayer;
+use tracing::info;
+
 use crate::config::{GetForwarders, SharedConfig, WebConfig};
 use crate::flv_manager::FlvManager;
 use crate::forwarder_manager::ForwarderCommand;
-use crate::stream_manager::{StreamManager, StreamMessage, StreamEvent};
-use tokio::sync::mpsc;
-use bytes::Bytes;
-use tokio_stream::wrappers::BroadcastStream;
-use tokio_stream::StreamExt;
-use tracing::info;
-use tower_http::cors::CorsLayer;
-use rust_embed::RustEmbed;
-use std::sync::Arc;
+use crate::stream_manager::{StreamEvent, StreamManager, StreamMessage};
 
 #[derive(RustEmbed)]
 #[folder = "static/"]
@@ -59,10 +59,15 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
 
     match Assets::get(&path) {
         Some(content) => {
-            let content_type = if path.ends_with(".html") { "text/html" }
-            else if path.ends_with(".js") { "application/javascript" }
-            else if path.ends_with(".css") { "text/css" }
-            else { "application/octet-stream" };
+            let content_type = if path.ends_with(".html") {
+                "text/html"
+            } else if path.ends_with(".js") {
+                "application/javascript"
+            } else if path.ends_with(".css") {
+                "text/css"
+            } else {
+                "application/octet-stream"
+            };
 
             Response::builder()
                 .header(header::CONTENT_TYPE, content_type)
@@ -86,13 +91,12 @@ async fn get_config(Extension(config): Extension<SharedConfig>) -> Json<WebConfi
     Json(WebConfig::from(&*c))
 }
 
-
 async fn update_config(
     Extension(config): Extension<SharedConfig>,
     Extension(forwarder_cmd_tx): Extension<mpsc::UnboundedSender<ForwarderCommand>>,
     Json(web_config): Json<WebConfig>,
 ) -> Json<bool> {
-    let success= {
+    let success = {
         let mut c = config.write().unwrap();
         c.update_from_web_config(&web_config);
         c.save().is_ok()
@@ -100,10 +104,15 @@ async fn update_config(
 
     if success {
         let forwarders = web_config.get_forwarders();
-        info!("Config saved, notifying ForwarderManager with {} forwarders", forwarders.len());
-        forwarder_cmd_tx.send(ForwarderCommand::UpdateConfig(forwarders)).ok();
+        info!(
+            "Config saved, notifying ForwarderManager with {} forwarders",
+            forwarders.len()
+        );
+        forwarder_cmd_tx
+            .send(ForwarderCommand::UpdateConfig(forwarders))
+            .ok();
     }
-    
+
     Json(success)
 }
 
@@ -111,16 +120,18 @@ pub async fn handle_flv_stream(
     Extension(manager): Extension<Arc<FlvManager>>,
 ) -> impl IntoResponse {
     tracing::info!("HTTP-FLV: Request for stream");
-    
+
     // 获取广播通道订阅者和头部数据
     let (rx, header_data) = manager.subscribe_flv().await;
     // 创建一个流，先发送头部信息
-    let header_stream = tokio_stream::iter(vec![Ok::<Bytes, std::convert::Infallible>(header_data)]);
+    let header_stream =
+        tokio_stream::iter(vec![Ok::<Bytes, std::convert::Infallible>(header_data)]);
     // 创建剩余数据流
-    let remaining_stream =BroadcastStream::new(rx).map(|data| Ok::<Bytes, std::convert::Infallible>(data.unwrap()));
+    let remaining_stream =
+        BroadcastStream::new(rx).map(|data| Ok::<Bytes, std::convert::Infallible>(data.unwrap()));
     let stream = header_stream.chain(remaining_stream);
 
-    Response::builder()                              
+    Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "video/x-flv")
         .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
@@ -141,13 +152,19 @@ async fn ws_handler(
 
 async fn handle_socket(mut socket: WebSocket, stream_manager: Arc<StreamManager>) {
     let mut rx = stream_manager.subscribe();
-    
+
     let snapshot = stream_manager.get_stream_snapshot().await;
-    let status = if snapshot.is_some() { "publishing" } else { "idle" };
-    let _ = socket.send(axum::extract::ws::Message::Text(
-        serde_json::json!({"status": status}).to_string()
-    )).await;
-    
+    let status = if snapshot.is_some() {
+        "publishing"
+    } else {
+        "idle"
+    };
+    let _ = socket
+        .send(axum::extract::ws::Message::Text(
+            serde_json::json!({"status": status}).to_string(),
+        ))
+        .await;
+
     loop {
         tokio::select! {
             Ok(msg) = rx.recv() => {

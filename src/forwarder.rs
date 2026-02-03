@@ -13,17 +13,21 @@
 //! 3. **Protocol Unification**: Handles both original relay (dynamic path) and
 //!    explicit upstream destinations through a unified path detection mechanism.
 
-use crate::handshake::handshake_with_server;
-use crate::rtmp::write_rtmp_message;
-use crate::rtmp_codec::RtmpMessage;
-use crate::server::ForwarderConfig;
+use std::time::{Duration, Instant};
+
 use anyhow::Result;
 use bytes::Bytes;
-use std::time::{Duration, Instant};
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpStream, tcp};
 use tokio::sync::mpsc;
+use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
+
+use crate::amf::Amf0;
+use crate::handshake::handshake_with_server;
+use crate::rtmp::{send_rtmp_command, write_rtmp_message, write_rtmp_message2};
+use crate::rtmp_codec::RtmpMessage;
+use crate::server::ForwarderConfig;
 
 /// ProtocolSnapshot caches the critical state headers and dynamic names
 /// received from the client to sync with new or reconnected destinations.
@@ -160,9 +164,7 @@ impl Forwarder {
         }
 
         // Connect to forwarder destination
-        if let Ok(Ok(mut socket)) =
-            tokio::time::timeout(std::time::Duration::from_secs(3), TcpStream::connect(&addr))
-                .await
+        if let Ok(Ok(mut socket)) = timeout(Duration::from_secs(3), TcpStream::connect(&addr)).await
         {
             socket.set_nodelay(true).ok();
 
@@ -190,10 +192,7 @@ impl Forwarder {
     }
 
     /// Perform the standard RTMP publishing command sequence.
-    async fn setup_protocol(
-        &self,
-        w: &mut tcp::OwnedWriteHalf,
-    ) -> Result<()> {
+    async fn setup_protocol(&self, w: &mut tcp::OwnedWriteHalf) -> Result<()> {
         let app = self
             .config
             .app
@@ -214,7 +213,7 @@ impl Forwarder {
             app,
             self.snapshot.client_app.as_deref().unwrap_or("")
         );
-        crate::rtmp::send_rtmp_command(
+        send_rtmp_command(
             w,
             3,
             0,
@@ -222,27 +221,37 @@ impl Forwarder {
             "connect",
             1.0,
             &[
-                ("app", crate::amf::Amf0::String(app.into())),
+                ("app", Amf0::String(app.into())),
                 (
                     "tcUrl",
-                    crate::amf::Amf0::String(format!("rtmp://{}/{}", self.config.addr, app)),
+                    Amf0::String(format!("rtmp://{}/{}", self.config.addr, app)),
                 ),
-                ("fmsVer", crate::amf::Amf0::String("FMS/3,0,1,123".into())),
-                ("capabilities", crate::amf::Amf0::Number(31.0)),
+                ("fmsVer", Amf0::String("FMS/3,0,1,123".into())),
+                ("capabilities", Amf0::Number(31.0)),
             ],
             &[],
         )
         .await?;
 
         // 设置 chunk size
-        crate::rtmp::write_rtmp_message2(w, 3, 0, 1, 0 ,
-            &Bytes::from((self.chunk_size as u32).to_be_bytes().to_vec()), 128
-        ).await?;
-        info!("c->u [{}]: set chunk size to {}", self.config.addr, self.chunk_size);
+        write_rtmp_message2(
+            w,
+            3,
+            0,
+            1,
+            0,
+            &Bytes::from((self.chunk_size as u32).to_be_bytes().to_vec()),
+            128,
+        )
+        .await?;
+        info!(
+            "c->u [{}]: set chunk size to {}",
+            self.config.addr, self.chunk_size
+        );
 
         // 2-3. releaseStream and FCPublish are required by many standard servers (like Nginx-RTMP)
         for (cmd, tx) in [("releaseStream", 2.0), ("FCPublish", 3.0)] {
-            crate::rtmp::send_rtmp_command(
+            send_rtmp_command(
                 w,
                 3,
                 0,
@@ -250,20 +259,20 @@ impl Forwarder {
                 cmd,
                 tx,
                 &[],
-                &[crate::amf::Amf0::String(stream.into())],
+                &[Amf0::String(stream.into())],
             )
             .await?;
         }
 
         // 4. Create the logical stream
-        crate::rtmp::send_rtmp_command(w, 3, 0, self.chunk_size, "createStream", 4.0, &[], &[]).await?;
+        send_rtmp_command(w, 3, 0, self.chunk_size, "createStream", 4.0, &[], &[]).await?;
 
         // 5. Start publishing as "live"
         info!(
             "c->u [{}]: publish: stream=\"{}\"",
             self.config.addr, stream
         );
-        crate::rtmp::send_rtmp_command(
+        send_rtmp_command(
             w,
             3,
             1,
@@ -271,10 +280,7 @@ impl Forwarder {
             "publish",
             5.0,
             &[],
-            &[
-                crate::amf::Amf0::String(stream.into()),
-                crate::amf::Amf0::String("live".into()),
-            ],
+            &[Amf0::String(stream.into()), Amf0::String("live".into())],
         )
         .await?;
 
@@ -313,7 +319,7 @@ impl Forwarder {
                 self.config.addr, stream
             );
 
-            crate::rtmp::send_rtmp_command(
+            send_rtmp_command(
                 w,
                 3,
                 1,
@@ -321,12 +327,12 @@ impl Forwarder {
                 "FCUnpublish",
                 6.0,
                 &[],
-                &[crate::amf::Amf0::String(stream.into())],
+                &[Amf0::String(stream.into())],
             )
             .await
             .ok();
 
-            crate::rtmp::send_rtmp_command(
+            send_rtmp_command(
                 w,
                 3,
                 1,
@@ -334,7 +340,7 @@ impl Forwarder {
                 "deleteStream",
                 7.0,
                 &[],
-                &[crate::amf::Amf0::Number(1.0)],
+                &[Amf0::Number(1.0)],
             )
             .await
             .ok();

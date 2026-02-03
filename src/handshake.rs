@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::debug;
 
@@ -12,8 +13,9 @@ fn gen_random_buffer(buf: &mut [u8]) {
     }
 }
 
-pub async fn handshake_with_client<S>(client: &mut S) -> Result<()> 
-where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
+pub async fn handshake_with_client<S>(client: &mut S) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
 {
     // RTMP Server Handshake
     // 1. Read C0
@@ -61,8 +63,9 @@ where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
     Ok(())
 }
 
-pub async fn handshake_with_server<S>(server: &mut S) -> Result<()> 
-where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
+pub async fn handshake_with_server<S>(server: &mut S) -> Result<()>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
 {
     // RTMP Client Handshake
     // 1. Write C0 + C1
@@ -97,10 +100,7 @@ where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
     debug!("read S0+S1+S2 from server");
 
     // 3. Write C2 (Echo of S1)
-    server
-        .write_all(&s1)
-        .await
-        .context("write C2 to server")?;
+    server.write_all(&s1).await.context("write C2 to server")?;
     debug!("sent C2 to server");
 
     debug!("handshake with server complete");
