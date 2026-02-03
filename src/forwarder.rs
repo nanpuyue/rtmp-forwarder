@@ -1,18 +1,3 @@
-//! RTMP Forwarding Engine
-//!
-//! This module implements the "Forwarder" model for RTMP stream fan-out.
-//! Each `Forwarder` represents a single destination server and is responsible
-//! for its own connection lifecycle, handshaking, and media forwarding.
-//!
-//! Architecture:
-//! 1. **Isolation**: Failures in one destination (timeouts, disconnects) do not affect
-//!    the source client or other destinations.
-//! 2. **State Syncing**: Using `ProtocolSnapshot`, we capture client metadata
-//!    and sequence headers during live streaming to ensure reconnected destinations
-//!    can resume immediately.
-//! 3. **Protocol Unification**: Handles both original relay (dynamic path) and
-//!    explicit upstream destinations through a unified path detection mechanism.
-
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
