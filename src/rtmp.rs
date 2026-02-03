@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 
@@ -86,8 +86,6 @@ pub trait PutU24 {
 }
 impl PutU24 for BytesMut {
     fn put_u24(&mut self, v: u32) {
-        self.put_u8(((v >> 16) & 0xff) as u8);
-        self.put_u8(((v >> 8) & 0xff) as u8);
-        self.put_u8((v & 0xff) as u8);
+        self.extend_from_slice(&v.to_be_bytes()[1..]);
     }
 }
