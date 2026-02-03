@@ -121,8 +121,8 @@ impl ForwarderManager {
         };
         
         tokio::spawn(forwarder.run());
-        info!("Started forwarder #{}: {}/{}/{}", index, config.addr, 
-            config.app.as_deref().unwrap_or(""), config.stream.as_deref().unwrap_or(""));
+        info!("Started forwarder #{}: {}/{}{}", index, config.addr, 
+            config.app.as_deref().unwrap_or_default(), config.stream.as_deref().unwrap_or_default());
         tx
     }
     
