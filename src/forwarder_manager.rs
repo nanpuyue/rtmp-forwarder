@@ -107,6 +107,7 @@ impl ForwarderManager {
         let (tx, rx) = mpsc::channel(128);
 
         let forwarder = Forwarder {
+            index,
             chunk_size,
             config: config.clone(),
             rx,

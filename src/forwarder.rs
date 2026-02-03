@@ -80,6 +80,7 @@ impl ConnectionState {
 /// Forwarder handles forwarding to a single forwarder server.
 /// It runs in its own task to isolate client from destination network issues.
 pub struct Forwarder {
+    pub index: usize,
     pub chunk_size: usize,
     pub config: ForwarderConfig,
     pub rx: mpsc::Receiver<ForwardEvent>,
@@ -91,7 +92,7 @@ impl Forwarder {
     pub async fn run(mut self) {
         let mut state = ConnectionState::new();
 
-        info!("Forwarder [{}] started", self.config.addr);
+        info!("#{} [{}] started", self.index, self.config.addr);
 
         while let Some(event) = self.rx.recv().await {
             match event {
@@ -115,7 +116,10 @@ impl Forwarder {
                         );
 
                         if let Some(conn) = self.try_connect().await {
-                            info!("[{}] Connected successfully", self.config.addr);
+                            info!(
+                                "#{} [{}] entered forwarding state",
+                                self.index, self.config.addr
+                            );
                             state.conn = Some(conn);
                             state.failure = 0;
                             state.last_attempt = None;
@@ -147,7 +151,7 @@ impl Forwarder {
                 }
                 ForwardEvent::Shutdown => {
                     if let Some(ref mut w) = state.conn {
-                        self.graceful_shutdown(w).await;
+                        self.shutdown(w).await;
                     }
                     break;
                 }
@@ -208,10 +212,8 @@ impl Forwarder {
 
         // 1. connect
         info!(
-            "c->u [{}]: setup: app=\"{}\" client=\"{}\"",
-            self.config.addr,
-            app,
-            self.snapshot.client_app.as_deref().unwrap_or("")
+            "#{} [{}] connect to app=\"{}\"",
+            self.index, self.config.addr, app,
         );
         send_rtmp_command(
             w,
@@ -245,8 +247,8 @@ impl Forwarder {
         )
         .await?;
         info!(
-            "c->u [{}]: set chunk size to {}",
-            self.config.addr, self.chunk_size
+            "#{} [{}] set chunk size to {}",
+            self.index, self.config.addr, self.chunk_size
         );
 
         // 2-3. releaseStream and FCPublish are required by many standard servers (like Nginx-RTMP)
@@ -269,8 +271,8 @@ impl Forwarder {
 
         // 5. Start publishing as "live"
         info!(
-            "c->u [{}]: publish: stream=\"{}\"",
-            self.config.addr, stream
+            "#{} [{}] publish to stream=\"{}\"",
+            self.index, self.config.addr, stream
         );
         send_rtmp_command(
             w,
@@ -303,7 +305,7 @@ impl Forwarder {
         Ok(())
     }
 
-    async fn graceful_shutdown(&self, w: &mut tcp::OwnedWriteHalf) {
+    async fn shutdown(&self, w: &mut tcp::OwnedWriteHalf) {
         if let (Some(_app), Some(stream)) = (
             self.config
                 .app
@@ -314,10 +316,7 @@ impl Forwarder {
                 .as_deref()
                 .or(self.snapshot.client_stream.as_deref()),
         ) {
-            info!(
-                "Destination [{}] graceful shutdown: stream={}",
-                self.config.addr, stream
-            );
+            info!("#{} [{}] shutdown", self.index, self.config.addr);
 
             send_rtmp_command(
                 w,
