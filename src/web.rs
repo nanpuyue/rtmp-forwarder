@@ -160,7 +160,7 @@ async fn handle_socket(mut socket: WebSocket, stream_manager: Arc<StreamManager>
         "idle"
     };
     let _ = socket
-        .send(axum::extract::ws::Message::Text(
+        .send(axum::extract::ws::Message::text(
             serde_json::json!({"status": status}).to_string(),
         ))
         .await;
@@ -174,7 +174,7 @@ async fn handle_socket(mut socket: WebSocket, stream_manager: Arc<StreamManager>
                         StreamEvent::StreamIdle | StreamEvent::StreamClosed | StreamEvent::StreamDeleted => "idle",
                         _ => continue,
                     };
-                    if socket.send(axum::extract::ws::Message::Text(
+                    if socket.send(axum::extract::ws::Message::text(
                         serde_json::json!({"status": status}).to_string()
                     )).await.is_err() {
                         break;
