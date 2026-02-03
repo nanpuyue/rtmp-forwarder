@@ -65,12 +65,6 @@ pub struct StreamManager {
     pub message_tx: broadcast::Sender<StreamMessage>,
 }
 
-impl StreamSnapshot {
-    pub fn has_av_seq_hdr(&self) -> bool {
-        self.audio_seq_hdr.is_some() && self.video_seq_hdr.is_some()
-    }
-}
-
 impl StreamManager {
     pub fn new() -> Self {
         let (msg_tx, _) = broadcast::channel(1024);
