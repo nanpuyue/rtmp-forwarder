@@ -13,7 +13,7 @@ pub fn amf_command_name(payload: &[u8]) -> Result<String> {
 
 /* ================= AMF0 helpers ================= */
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Amf0 {
     String(String),
     Number(f64),

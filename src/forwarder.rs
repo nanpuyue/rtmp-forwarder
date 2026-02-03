@@ -17,16 +17,17 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use bytes::Bytes;
-use tokio::io::AsyncReadExt;
 use tokio::net::{TcpStream, tcp};
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TrySendError;
 use tokio::time::timeout;
+use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
-use crate::amf::Amf0;
+use crate::amf::{Amf0, amf_command_name};
 use crate::handshake::handshake_with_server;
 use crate::rtmp::{send_rtmp_command, write_rtmp_message, write_rtmp_message2};
-use crate::rtmp_codec::RtmpMessage;
+use crate::rtmp_codec::{RtmpMessage, RtmpMessageStream};
 use crate::server::ForwarderConfig;
 
 /// ProtocolSnapshot caches the critical state headers and dynamic names
@@ -69,7 +70,14 @@ impl ConnectionState {
         }
 
         if let Some(last) = self.last_attempt {
-            let backoff_secs = 2u64.pow(self.failure);
+            let backoff_secs = match self.failure {
+                0 => 0,
+                1 => 5,
+                2 => 10,
+                3 => 20,
+                4 => 30,
+                _ => 30,
+            };
             last.elapsed() >= Duration::from_secs(backoff_secs)
         } else {
             true
@@ -174,20 +182,13 @@ impl Forwarder {
 
             // Step 0: C0+C1 -> S0+S1+S2 -> C2
             if handshake_with_server(&mut socket).await.is_ok() {
-                let (mut r, mut w) = socket.into_split();
+                let (r, mut w) = socket.into_split();
 
-                // Spawn a background task to drain anything sent from destination to us
-                tokio::spawn(async move {
-                    let mut buf = [0u8; 1024];
-                    while let Ok(n) = r.read(&mut buf).await {
-                        if n == 0 {
-                            break;
-                        }
-                    }
-                });
+                // Spawn a background task to read server responses
+                let response_rx = Self::spawn_response_reader(r);
 
                 // Perform RTMP command sequence (Connect -> Publish)
-                if self.setup_protocol(&mut w).await.is_ok() {
+                if self.setup_protocol(&mut w, response_rx).await.is_ok() {
                     return Some(w);
                 }
             }
@@ -195,8 +196,46 @@ impl Forwarder {
         None
     }
 
+    /// Spawn a background task to read and process server responses
+    fn spawn_response_reader(r: tcp::OwnedReadHalf) -> mpsc::Receiver<RtmpMessage> {
+        let (tx, rx) = mpsc::channel(32);
+
+        tokio::spawn(async move {
+            let mut msg_stream = RtmpMessageStream::new(r, 128);
+
+            while let Some(msg) = msg_stream.next().await {
+                match msg {
+                    Ok(message) => {
+                        // 检查是否是 SetChunkSize 消息 (msg_type = 1)
+                        if message.header.msg_type == 1 && message.header.msg_len >= 4 {
+                            let chunk_size =
+                                u32::from_be_bytes(message.payload()[..4].try_into().unwrap())
+                                    as usize;
+                            msg_stream.set_chunk_size(chunk_size);
+                            debug!("Server set chunk size to {}", chunk_size);
+                        }
+
+                        if let Err(TrySendError::Closed(_)) = tx.try_send(message) {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("Error reading server response: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        rx
+    }
+
     /// Perform the standard RTMP publishing command sequence.
-    async fn setup_protocol(&self, w: &mut tcp::OwnedWriteHalf) -> Result<()> {
+    async fn setup_protocol(
+        &self,
+        w: &mut tcp::OwnedWriteHalf,
+        mut response_rx: mpsc::Receiver<RtmpMessage>,
+    ) -> Result<()> {
         let app = self
             .config
             .app
@@ -235,6 +274,11 @@ impl Forwarder {
         )
         .await?;
 
+        // 等待并处理 connect 响应
+        if let Ok(Some(response)) = timeout(Duration::from_secs(5), response_rx.recv()).await {
+            self.handle_server_response(&response).await?;
+        }
+
         // 设置 chunk size
         write_rtmp_message2(
             w,
@@ -264,10 +308,20 @@ impl Forwarder {
                 &[Amf0::String(stream.into())],
             )
             .await?;
+
+            // 等待并处理响应
+            if let Ok(Some(response)) = timeout(Duration::from_secs(5), response_rx.recv()).await {
+                self.handle_server_response(&response).await?;
+            }
         }
 
         // 4. Create the logical stream
         send_rtmp_command(w, 3, 0, self.chunk_size, "createStream", 4.0, &[], &[]).await?;
+
+        // 等待并处理 createStream 响应
+        if let Ok(Some(response)) = timeout(Duration::from_secs(5), response_rx.recv()).await {
+            self.handle_server_response(&response).await?;
+        }
 
         // 5. Start publishing as "live"
         info!(
@@ -286,6 +340,11 @@ impl Forwarder {
         )
         .await?;
 
+        // 等待并处理 publish 响应
+        if let Ok(Some(response)) = timeout(Duration::from_secs(5), response_rx.recv()).await {
+            self.handle_server_response(&response).await?;
+        }
+
         // 6. Sync initial state (MetaData + Sequence Headers) so the stream can be decoded instantly
         if let Some(ref m) = self.snapshot.metadata {
             let mut m = m.clone();
@@ -302,6 +361,42 @@ impl Forwarder {
             a.header.timestamp = 0;
             write_rtmp_message(w, &a, self.chunk_size).await.ok();
         }
+        Ok(())
+    }
+
+    /// 处理服务器响应
+    async fn handle_server_response(&self, response: &RtmpMessage) -> Result<()> {
+        if response.header.msg_type != 20 {
+            return Ok(());
+        }
+
+        let payload = response.payload();
+        if let Ok(cmd) = amf_command_name(&payload) {
+            // let mut reader: AmfReader<'_> = AmfReader::new(&payload);
+            // let _ = reader.read_string(); // name
+            // let _ = reader.read_number(); // tx_id
+            // let _ = reader.read_null();
+
+            // TODO
+            match cmd.as_str() {
+                "_result" => {}
+                "_error" => {
+                    warn!(
+                        "#{} [{}] received _error response",
+                        self.index, self.config.addr
+                    );
+                    return Err(anyhow::anyhow!("Error"));
+                }
+                "onStatus" => {}
+                _ => {
+                    debug!(
+                        "#{} [{}] unknown response: {}",
+                        self.index, self.config.addr, cmd
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 
