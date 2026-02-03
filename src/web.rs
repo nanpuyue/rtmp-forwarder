@@ -1,15 +1,18 @@
+use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::ws::{WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{self, WebSocket, WebSocketUpgrade};
 use axum::http::{StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use bytes::Bytes;
 use rust_embed::RustEmbed;
-use tokio::sync::mpsc;
+use serde_json::json;
+use tokio::net::TcpListener;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 use tower_http::cors::CorsLayer;
@@ -27,7 +30,7 @@ struct Assets;
 pub async fn start_web_server(
     config: SharedConfig,
     flv_manager: Arc<FlvManager>,
-    forwarder_cmd_tx: mpsc::UnboundedSender<ForwarderCommand>,
+    forwarder_cmd_tx: UnboundedSender<ForwarderCommand>,
     stream_manager: Arc<StreamManager>,
 ) {
     let addr_str = config.read().unwrap().web_addr.clone();
@@ -46,7 +49,7 @@ pub async fn start_web_server(
         .layer(CorsLayer::permissive());
 
     info!("Web dashboard available at http://{}", addr);
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let listener = TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -93,7 +96,7 @@ async fn get_config(Extension(config): Extension<SharedConfig>) -> Json<WebConfi
 
 async fn update_config(
     Extension(config): Extension<SharedConfig>,
-    Extension(forwarder_cmd_tx): Extension<mpsc::UnboundedSender<ForwarderCommand>>,
+    Extension(forwarder_cmd_tx): Extension<UnboundedSender<ForwarderCommand>>,
     Json(web_config): Json<WebConfig>,
 ) -> Json<bool> {
     let success = {
@@ -119,16 +122,15 @@ async fn update_config(
 pub async fn handle_flv_stream(
     Extension(manager): Extension<Arc<FlvManager>>,
 ) -> impl IntoResponse {
-    tracing::info!("HTTP-FLV: Request for stream");
+    info!("HTTP-FLV: Request for stream");
 
     // 获取广播通道订阅者和头部数据
     let (rx, header_data) = manager.subscribe_flv().await;
     // 创建一个流，先发送头部信息
-    let header_stream =
-        tokio_stream::iter(vec![Ok::<Bytes, std::convert::Infallible>(header_data)]);
+    let header_stream = tokio_stream::iter(vec![Ok::<Bytes, Infallible>(header_data)]);
     // 创建剩余数据流
     let remaining_stream =
-        BroadcastStream::new(rx).map(|data| Ok::<Bytes, std::convert::Infallible>(data.unwrap()));
+        BroadcastStream::new(rx).map(|data| Ok::<Bytes, Infallible>(data.unwrap()));
     let stream = header_stream.chain(remaining_stream);
 
     Response::builder()
@@ -160,9 +162,7 @@ async fn handle_socket(mut socket: WebSocket, stream_manager: Arc<StreamManager>
         "idle"
     };
     let _ = socket
-        .send(axum::extract::ws::Message::text(
-            serde_json::json!({"status": status}).to_string(),
-        ))
+        .send(ws::Message::text(json!({"status": status}).to_string()))
         .await;
 
     loop {
@@ -174,8 +174,8 @@ async fn handle_socket(mut socket: WebSocket, stream_manager: Arc<StreamManager>
                         StreamEvent::StreamIdle | StreamEvent::StreamClosed | StreamEvent::StreamDeleted => "idle",
                         _ => continue,
                     };
-                    if socket.send(axum::extract::ws::Message::text(
-                        serde_json::json!({"status": status}).to_string()
+                    if socket.send(ws::Message::text(
+                        json!({"status": status}).to_string()
                     )).await.is_err() {
                         break;
                     }
