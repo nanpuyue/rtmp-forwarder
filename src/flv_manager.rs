@@ -46,7 +46,7 @@ impl FlvManager {
         let _ = self.broadcast_tx.send(data);
     }
 
-    pub async fn subscribe_flv(&self) -> (broadcast::Receiver<Bytes>, Bytes) {
+    pub async fn subscribe_flv(&self) -> (Bytes, broadcast::Receiver<Bytes>) {
         let mut rx = self.broadcast_tx.subscribe();
         // 过滤出第一个关键帧并追加到头
         let first_keyframe = async {
@@ -79,7 +79,7 @@ impl FlvManager {
         header.extend_from_slice(&first_keyframe);
 
         // 返回广播通道订阅者和带首包的头部数据
-        (rx, header.freeze())
+        (header.freeze(), rx)
     }
 
     fn rtmp_to_flv(&self, msg: &RtmpMessage) -> Option<Bytes> {
