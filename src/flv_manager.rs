@@ -43,42 +43,6 @@ impl FlvManager {
     }
     
     pub async fn subscribe_flv(&self) -> (broadcast::Receiver<Bytes>, Bytes) {
-        // 先获取一次快照检查
-        let mut snapshot = self.stream_manager.get_stream_snapshot().await;
-        
-        // 如果没有快照或没有双序列头，订阅 stream_manager 等待第一个流数据
-        let mut msg_rx = self.stream_manager.subscribe();
-        if snapshot.is_none() || !snapshot.as_ref().unwrap().has_av_seq_hdr() {
-            // 等待第一个流数据（音频或视频）
-            let timeout_duration = Duration::from_secs(4);
-            let start_time = std::time::Instant::now();
-            
-            while start_time.elapsed() < timeout_duration {
-                match msg_rx.recv().await {
-                    Ok(stream_msg) => {
-                        if let StreamMessage::RtmpMessage(msg) = stream_msg {
-                            // 检查是否为音频或视频的原始数据（不包含序列头）
-                            // 音频: msg_type=8, payload[1] 是 AACPacketType (1=原始数据)
-                            // 视频: msg_type=9, payload[1] 是 AVCPacketType (1=原始数据)
-                            let payload = msg.first_chunk_payload();
-                            let is_raw_data = (msg.header.msg_type == 8 || msg.header.msg_type == 9) 
-                                && payload.len() >= 2 
-                                && payload[1] == 1;
-                            if is_raw_data {
-                                // 收到第一个媒体数据，说明RTMP流已经发送过序列头
-                                snapshot = self.stream_manager.get_stream_snapshot().await;
-                                break;
-                            }
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-        }
-
-        // 使用快照创建FLV头部，包含序列头
-        let mut header_data = self.create_flv_header(snapshot.as_ref()).await;
-
         let mut rx = self.broadcast_tx.subscribe();
         // 过滤出第一个关键帧并追加到头
         let first_keyframe = async {
@@ -103,6 +67,9 @@ impl FlvManager {
             }
         };
         let first_keyframe = timeout(Duration::from_secs(4), first_keyframe).await.unwrap_or_default();
+        // 使用快照创建FLV头部，包含序列头
+        let snapshot = self.stream_manager.get_stream_snapshot().await;
+        let mut header_data = self.create_flv_header(snapshot.as_ref()).await;
         header_data.extend_from_slice(&first_keyframe);
 
         // 返回广播通道订阅者和带首包的头部数据
