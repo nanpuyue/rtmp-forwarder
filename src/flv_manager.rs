@@ -27,10 +27,10 @@ impl FlvManager {
         info!("FlvManager started");
         
         while let Ok(stream_msg) = msg_rx.recv().await {
-            if let StreamMessage::RtmpMessage(msg) = stream_msg {
-                if let Some(flv_data) = self.rtmp_to_flv(&msg) {
-                    self.broadcast_flv(flv_data).await;
-                }
+            if self.broadcast_tx.receiver_count() > 0
+            && let StreamMessage::RtmpMessage(msg) = stream_msg
+            && let Some(flv_data) = self.rtmp_to_flv(&msg) {
+                self.broadcast_flv(flv_data).await;
             }
         }
         
