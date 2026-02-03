@@ -56,7 +56,7 @@ impl FlvManager {
                         // 检查数据长度足够且为视频包 (tag_type = 9)
                         // payload[0] = frame_type(4位) + codec_id(4位)
                         // 0x17 = 0001 0111, 前4位是frame_type, 后4位是codec_id
-                        if data.len() >= 12 && data[0] == 9 && data[11] == 0x17 {
+                        if data.len() >= 12 && data[0] == 9 && data[11] >> 4 == 0x01 {
                             break data;
                         }
                     }
