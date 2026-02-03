@@ -1,4 +1,3 @@
-use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -8,7 +7,6 @@ use axum::http::{StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
-use bytes::Bytes;
 use rust_embed::RustEmbed;
 use serde_json::json;
 use tokio::net::TcpListener;
@@ -124,14 +122,9 @@ pub async fn handle_flv_stream(
 ) -> impl IntoResponse {
     info!("HTTP-FLV: Request for stream");
 
-    // 获取广播通道订阅者和头部数据
-    let (rx, header_data) = manager.subscribe_flv().await;
-    // 创建一个流，先发送头部信息
-    let header_stream = tokio_stream::iter(vec![Ok::<Bytes, Infallible>(header_data)]);
-    // 创建剩余数据流
-    let remaining_stream =
-        BroadcastStream::new(rx).map(|data| Ok::<Bytes, Infallible>(data.unwrap()));
-    let stream = header_stream.chain(remaining_stream);
+    // 获取 flv 头部数据和流广播
+    let (header, rx) = manager.subscribe_flv().await;
+    let flv_stream = tokio_stream::once(Ok(header)).chain(BroadcastStream::new(rx));
 
     Response::builder()
         .status(StatusCode::OK)
@@ -141,7 +134,7 @@ pub async fn handle_flv_stream(
         .header(header::EXPIRES, "0")
         .header(header::CONNECTION, "keep-alive")
         .header(header::TRANSFER_ENCODING, "chunked")
-        .body(Body::from_stream(stream))
+        .body(Body::from_stream(flv_stream))
         .unwrap()
 }
 
