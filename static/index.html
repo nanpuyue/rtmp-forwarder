@@ -394,7 +394,7 @@
             margin-top: 1.5rem;
         }
     </style>
-    <script src="flv.min.js"></script>
+    <script src="mpegts.js"></script>
 </head>
 
 <body>
@@ -508,13 +508,13 @@
                 player = null;
             }
 
-            if (!flvjs.isSupported()) {
+            if (!mpegts.isSupported()) {
                 alert('Browser not supported');
                 return;
             }
 
             try {
-                player = flvjs.createPlayer({
+                player = mpegts.createPlayer({
                     type: 'flv',
                     url: `/live/stream.flv?t=${Date.now()}`,
                     isLive: true,
