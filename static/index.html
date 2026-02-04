@@ -24,19 +24,49 @@
         }
 
         .container {
-            display: flex;
-            gap: 1rem;
             padding: 2rem;
             min-height: 100vh;
             animation: fadeIn 0.8s ease-out;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .main-card {
+            display: flex;
+            gap: 2rem;
         }
 
         .left-panel {
-            flex: 0 0 70%;
+            flex: 1;
+            min-width: 0;
         }
 
         .right-panel {
-            flex: 0 0 calc(30% - 1rem);
+            flex: 0 0 350px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .main-card {
+                flex-direction: column;
+                gap: 1.5rem;
+            }
+
+            .right-panel {
+                flex: 1;
+            }
+
+            .card {
+                border-radius: 0.25rem;
+                padding: 0.5rem;
+            }
+
+            .logo {
+                font-size: 3vw !important;
+            }
         }
 
         @keyframes fadeIn {
@@ -55,17 +85,17 @@
             background: var(--card-bg);
             backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 24px;
-            padding: 2.5rem;
+            border-radius: 0.75rem;
+            padding: 1.25rem;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
         }
 
         .logo {
             position: absolute;
-            bottom: 1rem;
-            left: 1rem;
+            bottom: 1vw;
+            left: 1vw;
             font-weight: 600;
-            font-size: 1rem;
+            font-size: 1.2vw;
             background: linear-gradient(to right, #818cf8, #c084fc);
             -webkit-background-clip: text;
             background-clip: text;
@@ -399,36 +429,36 @@
 
 <body>
     <div class="container">
-        <div class="left-panel">
-            <div class="card">
-                <div class="video-container">
-                    <video id="video" controls autoplay muted
-                        style="width: 100%; aspect-ratio: 16/9; background: black; border-radius: 8px;"></video>
-                    <div class="logo">RTMP Forwarder</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="right-panel">
-            <div class="card">
-                <div class="section">
-                    <span class="section-title">推流配置</span>
-                    <div id="upstreams-container"></div>
-                    <button class="btn btn-add" onclick="addUpstream()">+ 添加推流目标</button>
-                </div>
-
-                <div class="section">
-                    <span class="section-title">原址中继</span>
-                    <div class="upstream-item" style="align-items: center;">
-                        <input type="text" id="relay_addr" placeholder="留空自动获取（仅限 Linux 部署）">
-                        <label class="switch">
-                            <input type="checkbox" id="relay_enabled" onchange="save()">
-                            <span class="slider"></span>
-                        </label>
+        <div class="card">
+            <div class="main-card">
+                <div class="left-panel">
+                    <div class="video-container">
+                        <video id="video" controls autoplay muted playsinline
+                            style="width: 100%; aspect-ratio: 16/9; background: black; border-radius: 8px;"></video>
+                        <div class="logo">RTMP Forwarder</div>
                     </div>
                 </div>
 
-                <button class="btn btn-primary" onclick="save()">保存配置</button>
+                <div class="right-panel">
+                    <div class="section">
+                        <span class="section-title">推流配置</span>
+                        <div id="upstreams-container"></div>
+                        <button class="btn btn-add" onclick="addUpstream()">+ 添加推流目标</button>
+                    </div>
+
+                    <div class="section">
+                        <span class="section-title">原址中继</span>
+                        <div class="upstream-item" style="align-items: center;">
+                            <input type="text" id="relay_addr" placeholder="留空自动获取（仅限 Linux 部署）">
+                            <label class="switch">
+                                <input type="checkbox" id="relay_enabled" onchange="save()">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-primary" onclick="save()">保存配置</button>
+                </div>
             </div>
         </div>
     </div>
