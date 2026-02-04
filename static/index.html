@@ -39,6 +39,7 @@
         .left-panel {
             flex: 1;
             min-width: 0;
+            position: relative;
         }
 
         .right-panel {
@@ -66,6 +67,13 @@
 
             .logo {
                 font-size: 3vw !important;
+                bottom: 0.5rem !important;
+                left: 0.5rem !important;
+            }
+
+            video {
+                border-radius: 8px !important;
+                aspect-ratio: 16/9 !important;
             }
         }
 
@@ -92,15 +100,17 @@
 
         .logo {
             position: absolute;
-            bottom: 1vw;
-            left: 1vw;
+            bottom: 1rem;
+            left: 1rem;
             font-weight: 600;
-            font-size: 1.2vw;
+            font-size: 0.875rem;
             background: linear-gradient(to right, #818cf8, #c084fc);
             -webkit-background-clip: text;
             background-clip: text;
             -webkit-text-fill-color: transparent;
-            opacity: 0.6;
+            opacity: 0.8;
+            z-index: 10;
+            pointer-events: none;
         }
 
         .section {
@@ -345,12 +355,6 @@
             }
         }
 
-        .video-container {
-            position: relative;
-            background: #000;
-            border-radius: 12px;
-            padding: 1rem;
-        }
 
 
         .modal {
@@ -432,11 +436,9 @@
         <div class="card">
             <div class="main-card">
                 <div class="left-panel">
-                    <div class="video-container">
-                        <video id="video" controls autoplay muted playsinline
-                            style="width: 100%; aspect-ratio: 16/9; background: black; border-radius: 8px;"></video>
-                        <div class="logo">RTMP Forwarder</div>
-                    </div>
+                    <video id="video" controls autoplay muted playsinline
+                        style="width: 100%; height: 100%; object-fit: cover; background: black; border-radius: 12px;"></video>
+                    <div class="logo">RTMP Forwarder</div>
                 </div>
 
                 <div class="right-panel">
@@ -557,11 +559,28 @@
                     autoCleanupMinBackwardDuration: 2,
                 });
 
-                player.attachMediaElement(document.getElementById('video'));
+                const video = document.getElementById('video');
+                
+                // 视频加载前设置初始16:9比例
+                video.style.aspectRatio = '16/9';
+                video.style.objectFit = 'cover';
+                
+                // 监听视频元数据加载完成事件
+                video.addEventListener('loadedmetadata', function onMetadataLoaded() {
+                    video.removeEventListener('loadedmetadata', onMetadataLoaded);
+                    
+                    // 视频加载后移除固定比例，让视频自适应
+                    video.style.aspectRatio = 'auto';
+                    video.style.objectFit = 'cover';
+                    
+                    // 根据视频尺寸调整容器
+                    adjustVideoContainer(video);
+                });
+
+                player.attachMediaElement(video);
                 player.load();
                 player.play();
 
-                const video = document.getElementById('video');
                 let targetLatency = 0.5;
 
                 if (latencyCheckInterval) {
@@ -634,6 +653,12 @@
                 }
             }
         });
+
+        function adjustVideoContainer(video) {
+            // 视频加载后已经移除了固定比例，让视频自适应
+            // 现在视频直接在left-panel中，会根据left-panel的宽度自适应
+            console.log('Video loaded with dimensions:', video.videoWidth, 'x', video.videoHeight);
+        }
 
         async function load() {
             const res = await fetch('/api/config');
