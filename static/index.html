@@ -251,10 +251,10 @@
         .btn-remove {
             background: #ef4444;
             color: white;
-            padding: 0.8rem 1.5rem;
-            border-radius: 12px;
+            padding: 0.6rem 1rem;
+            border-radius: 8px;
             flex-shrink: 0;
-            font-size: 0.95rem;
+            font-size: 0.875rem;
             margin: 0;
         }
 
@@ -265,10 +265,10 @@
         .btn-save {
             background: #3b82f6;
             color: white;
-            padding: 0.8rem 1.5rem;
-            border-radius: 12px;
+            padding: 0.6rem 1rem;
+            border-radius: 8px;
             flex-shrink: 0;
-            font-size: 0.95rem;
+            font-size: 0.875rem;
         }
 
         .btn-save:hover {
@@ -364,6 +364,8 @@
             height: 100%;
             background: rgba(0, 0, 0, 0.7);
             backdrop-filter: blur(4px);
+            align-items: center;
+            justify-content: center;
         }
 
         .modal-content {
@@ -371,11 +373,11 @@
             background: var(--card-bg);
             backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 24px;
-            margin: 10% auto;
-            padding: 2rem;
-            width: 90%;
-            max-width: 500px;
+            border-radius: 12px;
+            padding: 1.5rem;
+            width: calc(100% - 2rem);
+            max-width: 400px;
+            margin: 1rem;
             animation: modalIn 0.3s ease-out;
         }
 
@@ -393,8 +395,8 @@
 
         .modal-close {
             position: absolute;
-            right: 1.5rem;
-            top: 1.5rem;
+            right: 1rem;
+            top: 1rem;
             font-size: 1.5rem;
             color: #94a3b8;
             cursor: pointer;
@@ -706,7 +708,7 @@
             editingIndex = -1; // 标记为新建模式
             document.getElementById('modal_addr').value = "";
             document.getElementById('modal_stream').value = "";
-            document.getElementById('editModal').style.display = 'block';
+            document.getElementById('editModal').style.display = 'flex';
         }
 
         function toggleUpstream(index) {
@@ -724,7 +726,7 @@
 
             document.getElementById('modal_addr').value = base;
             document.getElementById('modal_stream').value = u.stream || '';
-            document.getElementById('editModal').style.display = 'block';
+            document.getElementById('editModal').style.display = 'flex';
         }
 
         function closeModal() {
