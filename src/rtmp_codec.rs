@@ -160,7 +160,7 @@ impl Decoder for RtmpCodec {
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         // 读取基本 chunk header
-        if src.len() < 1 {
+        if src.is_empty() {
             return Ok(None);
         }
         let fmt = src[0] >> 6;
@@ -408,7 +408,7 @@ impl Iterator for RtmpMessageIter {
         Some(RtmpChunk {
             header: RtmpChunkHeader {
                 fmt,
-                csid: self.csid as usize,
+                csid: self.csid,
                 timestamp: RtmpChunkTimestamp {
                     absolute: ts,
                     raw: ts_field,

@@ -163,8 +163,8 @@ async fn handle_socket(mut socket: WebSocket, stream_manager: Arc<StreamManager>
             Ok(msg) = rx.recv() => {
                 if let StreamMessage::StateChanged(event) = msg {
                     let status = match event {
-                        StreamEvent::StreamPublishing => "publishing",
-                        StreamEvent::StreamIdle | StreamEvent::StreamClosed | StreamEvent::StreamDeleted => "idle",
+                        StreamEvent::Publishing => "publishing",
+                        StreamEvent::Idle | StreamEvent::Closed | StreamEvent::Deleted => "idle",
                         _ => continue,
                     };
                     if socket.send(ws::Message::text(

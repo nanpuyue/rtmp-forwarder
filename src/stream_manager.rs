@@ -16,11 +16,11 @@ pub enum StreamState {
 
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
-    StreamCreated,
-    StreamPublishing,
-    StreamIdle,
-    StreamClosed,
-    StreamDeleted,
+    Created,
+    Publishing,
+    Idle,
+    Closed,
+    Deleted,
 }
 
 #[derive(Debug, Clone)]
@@ -83,26 +83,26 @@ impl StreamManager {
     pub async fn handle_rtmp_message(&self, msg: RtmpMessage) {
         let mut stream = self.default_stream.write().await;
 
-        if let Some(s) = stream.as_mut() {
-            if s.state == StreamState::Publishing {
-                let payload = msg.first_chunk_payload();
-                match msg.header.msg_type {
-                    18 | 15 => {
-                        s.metadata = Some(msg.payload());
-                    }
-                    9 if payload.len() >= 2 && payload[0] == 0x17 && payload[1] == 0 => {
-                        s.video_seq_hdr = Some(msg.payload());
-                    }
-                    8 if payload.len() >= 2 && (payload[0] >> 4) == 10 && payload[1] == 0 => {
-                        s.audio_seq_hdr = Some(msg.payload());
-                    }
-                    _ => {}
+        if let Some(s) = stream.as_mut()
+            && s.state == StreamState::Publishing
+        {
+            let payload = msg.first_chunk_payload();
+            match msg.header.msg_type {
+                18 | 15 => {
+                    s.metadata = Some(msg.payload());
                 }
-                s.last_active = Instant::now();
-                drop(stream);
-
-                self.message_tx.send(StreamMessage::RtmpMessage(msg)).ok();
+                9 if payload.len() >= 2 && payload[0] == 0x17 && payload[1] == 0 => {
+                    s.video_seq_hdr = Some(msg.payload());
+                }
+                8 if payload.len() >= 2 && (payload[0] >> 4) == 10 && payload[1] == 0 => {
+                    s.audio_seq_hdr = Some(msg.payload());
+                }
+                _ => {}
             }
+            s.last_active = Instant::now();
+            drop(stream);
+
+            self.message_tx.send(StreamMessage::RtmpMessage(msg)).ok();
         }
     }
 
@@ -150,7 +150,7 @@ impl StreamManager {
             return Err(StreamError::AlreadyPublishing);
         }
         self.message_tx
-            .send(StreamMessage::StateChanged(StreamEvent::StreamCreated))
+            .send(StreamMessage::StateChanged(StreamEvent::Created))
             .ok();
         Ok(())
     }
@@ -171,7 +171,7 @@ impl StreamManager {
                 let mut default_stream = self.default_stream.write().await;
                 drop(default_stream.replace(stream));
                 self.message_tx
-                    .send(StreamMessage::StateChanged(StreamEvent::StreamPublishing))
+                    .send(StreamMessage::StateChanged(StreamEvent::Publishing))
                     .ok();
                 Ok(())
             }
@@ -195,7 +195,7 @@ impl StreamManager {
             }
             drop(stream);
             self.message_tx
-                .send(StreamMessage::StateChanged(StreamEvent::StreamIdle))
+                .send(StreamMessage::StateChanged(StreamEvent::Idle))
                 .ok();
         }
         Ok(())
@@ -218,7 +218,7 @@ impl StreamManager {
             }
             drop(stream);
             self.message_tx
-                .send(StreamMessage::StateChanged(StreamEvent::StreamClosed))
+                .send(StreamMessage::StateChanged(StreamEvent::Closed))
                 .ok();
         }
         Ok(())
@@ -240,7 +240,7 @@ impl StreamManager {
         }
         drop(stream);
         self.message_tx
-            .send(StreamMessage::StateChanged(StreamEvent::StreamDeleted))
+            .send(StreamMessage::StateChanged(StreamEvent::Deleted))
             .ok();
         Ok(())
     }
@@ -258,7 +258,7 @@ impl StreamManager {
         drop(stream);
         if state.1 != StreamState::None {
             self.message_tx
-                .send(StreamMessage::StateChanged(StreamEvent::StreamClosed))
+                .send(StreamMessage::StateChanged(StreamEvent::Closed))
                 .ok();
         }
     }

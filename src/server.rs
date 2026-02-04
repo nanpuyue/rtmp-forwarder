@@ -34,11 +34,8 @@ pub async fn handle_client(
 
     // 获取原始目的地址
     let orig_dest_addr = get_original_destination(&client).ok();
-    if orig_dest_addr.is_some() {
-        info!(
-            "Captured original destination address: {}",
-            orig_dest_addr.as_ref().unwrap()
-        );
+    if let Some(addr) = &orig_dest_addr {
+        info!("Captured original destination address: {addr}",);
     }
 
     handshake_with_client(&mut client).await?;

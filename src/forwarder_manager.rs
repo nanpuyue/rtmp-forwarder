@@ -56,13 +56,13 @@ impl ForwarderManager {
                         }
                         StreamMessage::StateChanged(event) => {
                             match event {
-                                StreamEvent::StreamPublishing => {
+                                StreamEvent::Publishing => {
                                     if let Some(snapshot) = self.stream_manager.get_stream_snapshot().await {
                                         info!("Stream publishing");
                                         self.sync_forwarders(&mut forwarders, snapshot).await;
                                     }
                                 }
-                                StreamEvent::StreamIdle | StreamEvent::StreamClosed | StreamEvent::StreamDeleted => {
+                                StreamEvent::Idle | StreamEvent::Closed | StreamEvent::Deleted => {
                                     info!("Stream stopped");
                                     self.stop_all_forwarders(&mut forwarders).await;
                                 }
@@ -199,15 +199,15 @@ impl ForwarderManager {
                 }
                 (Some(new), Some(_)) if new.enabled => {
                     // Enabled and running, check if config changed
-                    if let Some(old) = old_config {
-                        if old.addr != new.addr || old.app != new.app || old.stream != new.stream {
-                            // Restart
-                            let tx = forwarder.take().unwrap();
-                            self.stop_forwarder(index, tx).await;
-                            let tx = self.start_forwarder(index, new, &snapshot).await;
-                            *forwarder = Some(tx);
-                            restarted += 1;
-                        }
+                    if let Some(old) = old_config
+                        && (old.addr != new.addr || old.app != new.app || old.stream != new.stream)
+                    {
+                        // Restart
+                        let tx = forwarder.take().unwrap();
+                        self.stop_forwarder(index, tx).await;
+                        let tx = self.start_forwarder(index, new, &snapshot).await;
+                        *forwarder = Some(tx);
+                        restarted += 1;
                     }
                 }
                 (None, Some(_)) => {
@@ -234,7 +234,7 @@ impl ForwarderManager {
         );
     }
 
-    async fn stop_all_forwarders(&self, forwarders: &mut Vec<Option<mpsc::Sender<ForwardEvent>>>) {
+    async fn stop_all_forwarders(&self, forwarders: &mut [Option<mpsc::Sender<ForwardEvent>>]) {
         for (index, tx) in forwarders.iter_mut().enumerate() {
             if let Some(tx) = tx.take() {
                 self.stop_forwarder(index, tx).await;
