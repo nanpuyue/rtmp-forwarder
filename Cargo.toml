@@ -2,21 +2,22 @@
 name = "rtmp-forwarder"
 version = "0.1.0"
 edition = "2024"
+authors = ["nanpuyue <nanpuyue@gmail.com>"]
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-bytes = "1"
-anyhow = "1"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-clap = { version = "4", features = ["derive"] }
-axum = { version = "0.8", features = ["ws"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tower-http = { version = "0.6", features = ["fs", "cors"] }
-rust-embed = "8.11"
-tokio-stream = { version = "*", features = ["sync"] }
-tokio-util = { version = "0.7", features = ["codec", "io-util"] }
+anyhow = "1.0.100"
+axum = { version = "0.8.8", features = ["ws"] }
+bytes = "1.11.1"
+clap = { version = "4.5.57", features = ["derive"] }
+rust-embed = "8.11.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.49.0", features = ["net", "rt-multi-thread", "signal"] }
+tokio-stream = { version = "0.1.18", features = ["sync"] }
+tokio-util = { version = "0.7.18", features = ["codec", "io-util"] }
+tower-http = { version = "0.6.8", features = ["cors"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["fmt", "env-filter"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nix = { version = "0.31", features = ["socket", "net"] }
