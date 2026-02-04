@@ -176,17 +176,8 @@
             align-items: center;
         }
 
-        .upstream-host {
-            flex: 1;
-            min-width: 0;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            padding: 0.6rem 1rem;
-            background: rgba(15, 23, 42, 0.6);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
-            color: #cbd5e1;
+        .upstream-item input[readonly] {
+            cursor: default;
         }
 
         .btn-icon {
@@ -696,7 +687,7 @@
             if (host && !host.startsWith("rtmp://")) host = "rtmp://" + host;
 
             div.innerHTML = `
-                <div class="upstream-host" title="${host}">${host}</div>
+                <input type="text" value="${host}" title="${host}" readonly>
                 <label class="switch">
                     <input type="checkbox" id="up_enabled_${index}" ${u.enabled ? 'checked' : ''} onchange="toggleUpstream(${index})">
                     <span class="slider"></span>
