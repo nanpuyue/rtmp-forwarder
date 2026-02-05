@@ -70,7 +70,7 @@ pub async fn handle_client(
         // 提取app和stream信息
         let mut command_app = None;
         let mut command_stream = None;
-        if msg.header.msg_type == 20 {
+        if msg.header().msg_type == 20 {
             let payload = msg.payload();
             if let Ok(cmd) = amf_command_name(&payload) {
                 let mut r = AmfReader::new(&payload);
@@ -94,9 +94,9 @@ pub async fn handle_client(
             }
         }
 
-        match msg.header.msg_type {
+        match msg.header().msg_type {
             1 => {
-                if msg.header.msg_len >= 4 {
+                if msg.header().msg_len >= 4 {
                     let payload = msg.payload();
                     let c2s_chunk = u32::from_be_bytes(payload[..4].try_into().unwrap()) as usize;
                     msg_stream.set_chunk_size(c2s_chunk);

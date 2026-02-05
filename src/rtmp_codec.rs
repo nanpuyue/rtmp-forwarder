@@ -36,10 +36,24 @@ pub struct RtmpChunkHeader {
 
 #[derive(Clone, Debug)]
 pub struct RtmpChunk {
-    pub header: RtmpChunkHeader,
-    pub payload_offset: usize,
-    pub msg_complete: bool,
-    pub raw_bytes: Bytes,
+    header: RtmpChunkHeader,
+    payload_offset: usize,
+    msg_complete: bool,
+    raw_bytes: Bytes,
+}
+
+impl RtmpChunk {
+    pub fn header(&self) -> &RtmpChunkHeader {
+        &self.header
+    }
+    
+    pub fn raw_bytes(&self) -> &Bytes {
+        &self.raw_bytes
+    }
+
+    pub fn payload(&self) -> Bytes {
+        self.raw_bytes.slice(self.payload_offset..)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -52,10 +66,32 @@ pub struct RtmpMessageHeader {
 
 #[derive(Clone, Debug)]
 pub struct RtmpMessage {
-    pub csid: u8,
-    pub header: RtmpMessageHeader,
-    pub chunk_size: usize,
-    pub chunks: Vec<RtmpChunk>,
+    csid: u8,
+    header: RtmpMessageHeader,
+    chunk_size: usize,
+    chunks: Vec<RtmpChunk>,
+}
+
+impl RtmpMessage {
+    pub fn csid(&self) -> u8 {
+        self.csid
+    }
+
+    pub fn header(&self) -> &RtmpMessageHeader {
+        &self.header
+    }
+
+    pub fn chunk_size(&self) -> usize {
+        self.chunk_size
+    }
+
+    pub fn chunks(&self) -> &[RtmpChunk] {
+        &self.chunks
+    }
+
+    pub fn set_timestamp(&mut self, timestamp: u32) {
+        self.header.timestamp = timestamp;
+    }
 }
 
 pub struct RtmpMessageIter {
@@ -78,12 +114,6 @@ impl RtmpChunkTimestamp {
         } else {
             self.absolute = raw;
         }
-    }
-}
-
-impl RtmpChunk {
-    pub fn payload(&self) -> Bytes {
-        self.raw_bytes.slice(self.payload_offset..)
     }
 }
 

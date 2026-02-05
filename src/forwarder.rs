@@ -95,7 +95,7 @@ impl Forwarder {
                     // self.snapshot.update_from_message(&msg);
 
                     // Skip forwarding control commands as we replay our own handshake
-                    if msg.header.msg_type == 20 {
+                    if msg.header().msg_type == 20 {
                         continue;
                     }
 
@@ -136,7 +136,7 @@ impl Forwarder {
                         }
 
                         // Sync output chunk size if destination requests change (via SetChunkSize)
-                        if msg.header.msg_type == 1 && msg.header.msg_len >= 4 {
+                        if msg.header().msg_type == 1 && msg.header().msg_len >= 4 {
                             self.chunk_size =
                                 u32::from_be_bytes(msg.payload()[..4].try_into().unwrap()) as usize;
                         }
@@ -192,7 +192,7 @@ impl Forwarder {
                 match msg {
                     Ok(message) => {
                         // 检查是否是 SetChunkSize 消息 (msg_type = 1)
-                        if message.header.msg_type == 1 && message.header.msg_len >= 4 {
+                        if message.header().msg_type == 1 && message.header().msg_len >= 4 {
                             let chunk_size =
                                 u32::from_be_bytes(message.payload()[..4].try_into().unwrap())
                                     as usize;
@@ -333,17 +333,17 @@ impl Forwarder {
         // 6. Sync initial state (MetaData + Sequence Headers) so the stream can be decoded instantly
         if let Some(ref m) = self.snapshot.metadata {
             let mut m = m.clone();
-            m.header.timestamp = 0;
+            m.set_timestamp(0);
             write_rtmp_message(w, &m, self.chunk_size).await.ok();
         }
         if let Some(ref v) = self.snapshot.video_seq_hdr {
             let mut v = v.clone();
-            v.header.timestamp = 0;
+            v.set_timestamp(0);
             write_rtmp_message(w, &v, self.chunk_size).await.ok();
         }
         if let Some(ref a) = self.snapshot.audio_seq_hdr {
             let mut a = a.clone();
-            a.header.timestamp = 0;
+            a.set_timestamp(0);
             write_rtmp_message(w, &a, self.chunk_size).await.ok();
         }
         Ok(())
@@ -351,7 +351,7 @@ impl Forwarder {
 
     /// 处理服务器响应
     async fn handle_server_response(&self, response: &RtmpMessage) -> Result<()> {
-        if response.header.msg_type != 20 {
+        if response.header().msg_type != 20 {
             return Ok(());
         }
 

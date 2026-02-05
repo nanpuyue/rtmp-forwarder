@@ -16,13 +16,13 @@ where
     S: AsyncWrite + Unpin,
 {
     // chunk size 匹配时原样转发
-    if chunk_size == msg.chunk_size {
-        for chunk in &msg.chunks {
-            s.write_all(&chunk.raw_bytes).await?;
+    if chunk_size == msg.chunk_size() {
+        for chunk in msg.chunks() {
+            s.write_all(chunk.raw_bytes()).await?;
         }
     } else {
         for chunk in RtmpMessageIter::new_with_msg(msg, chunk_size) {
-            s.write_all(&chunk.raw_bytes).await?;
+            s.write_all(chunk.raw_bytes()).await?;
         }
     }
     Ok(())
@@ -43,7 +43,7 @@ where
     for chunk in
         RtmpMessageIter::new_with_payload(csid, timestamp, msg_type, stream_id, chunk_size, payload)
     {
-        s.write_all(&chunk.raw_bytes).await?;
+        s.write_all(chunk.raw_bytes()).await?;
     }
     Ok(())
 }

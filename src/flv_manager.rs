@@ -88,10 +88,10 @@ impl FlvManager {
     }
 
     fn rtmp_to_flv(&self, msg: &RtmpMessage) -> Option<Bytes> {
-        match msg.header.msg_type {
-            8 => Some(self.create_flv_audio_tag(&msg.payload(), msg.header.timestamp)),
-            9 => Some(self.create_flv_video_tag(&msg.payload(), msg.header.timestamp)),
-            18 => Some(self.create_flv_script_tag(&msg.payload(), msg.header.timestamp)),
+        match msg.header().msg_type {
+            8 => Some(self.create_flv_audio_tag(&msg.payload(), msg.header().timestamp)),
+            9 => Some(self.create_flv_video_tag(&msg.payload(), msg.header().timestamp)),
+            18 => Some(self.create_flv_script_tag(&msg.payload(), msg.header().timestamp)),
             _ => None,
         }
     }

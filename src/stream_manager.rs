@@ -87,7 +87,7 @@ impl StreamManager {
             && s.state == StreamState::Publishing
         {
             let payload = msg.first_chunk_payload();
-            match msg.header.msg_type {
+            match msg.header().msg_type {
                 18 | 15 => {
                     s.metadata = Some(msg.payload());
                 }
