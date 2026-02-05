@@ -3,12 +3,6 @@ use bytes::{Bytes, BytesMut};
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 
-use crate::amf::Amf0;
-use crate::amf::amf_write_null;
-use crate::amf::amf_write_number;
-use crate::amf::amf_write_object;
-use crate::amf::amf_write_string;
-use crate::amf::amf_write_value;
 use crate::rtmp_codec::{RtmpMessage, RtmpMessageIter};
 
 pub async fn write_rtmp_message<S>(s: &mut S, msg: &RtmpMessage, chunk_size: usize) -> Result<()>
@@ -46,37 +40,6 @@ where
         s.write_all(chunk.raw_bytes()).await?;
     }
     Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-pub async fn send_rtmp_command<S>(
-    s: &mut S,
-    csid: u8,
-    stream_id: u32,
-    chunk_size: usize,
-    name: &str,
-    tx_id: f64,
-    items: &[(&str, Amf0)],
-    args: &[Amf0],
-) -> Result<()>
-where
-    S: AsyncWrite + Unpin,
-{
-    let mut payload = BytesMut::new();
-    amf_write_string(&mut payload, name);
-    amf_write_number(&mut payload, tx_id);
-
-    if items.is_empty() {
-        amf_write_null(&mut payload);
-    } else {
-        amf_write_object(&mut payload, items);
-    }
-
-    for arg in args {
-        amf_write_value(&mut payload, arg);
-    }
-
-    write_rtmp_message2(s, csid, 0, 20, stream_id, &payload.freeze(), chunk_size).await
 }
 
 /* ================= misc ================= */

@@ -10,9 +10,9 @@ use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
-use crate::amf::{Amf0, AmfReader, amf_command_name};
+use crate::amf::{AmfReader, RtmpCommand, amf_command_name};
 use crate::handshake::handshake_with_server;
-use crate::rtmp::{send_rtmp_command, write_rtmp_message, write_rtmp_message2};
+use crate::rtmp::{write_rtmp_message, write_rtmp_message2};
 use crate::rtmp_codec::{RtmpMessage, RtmpMessageStream};
 use crate::server::ForwarderConfig;
 
@@ -242,25 +242,13 @@ impl Forwarder {
             "#{} [{}] connect to app=\"{}\"",
             self.index, self.config.addr, app,
         );
-        send_rtmp_command(
-            w,
-            3,
-            0,
-            128,
-            "connect",
-            1.0,
-            &[
-                ("app", Amf0::String(app.into())),
-                (
-                    "tcUrl",
-                    Amf0::String(format!("rtmp://{}/{}", self.config.addr, app)),
-                ),
-                ("fmsVer", Amf0::String("FMS/3,0,1,123".into())),
-                ("capabilities", Amf0::Number(31.0)),
-            ],
-            &[],
-        )
-        .await?;
+        RtmpCommand::new("connect", 1.0)
+            .object("app", app.as_str())
+            .object("tcUrl", format!("rtmp://{}/{}", self.config.addr, app))
+            .object("fmsVer", "FMS/3,0,1,123")
+            .object("capabilities", 31.0)
+            .send(w, 3, 0, 128)
+            .await?;
 
         // 等待并处理 connect 响应
         timeout(
@@ -287,21 +275,16 @@ impl Forwarder {
 
         // 2-3. releaseStream and FCPublish are required by many standard servers (like Nginx-RTMP)
         for (cmd, tx) in [("releaseStream", 2.0), ("FCPublish", 3.0)] {
-            send_rtmp_command(
-                w,
-                3,
-                0,
-                self.chunk_size,
-                cmd,
-                tx,
-                &[],
-                &[Amf0::String(stream.into())],
-            )
-            .await?;
+            RtmpCommand::new(cmd, tx)
+                .arg(stream.as_str())
+                .send(w, 3, 0, self.chunk_size)
+                .await?;
         }
 
         // 4. Create the logical stream
-        send_rtmp_command(w, 3, 0, self.chunk_size, "createStream", 4.0, &[], &[]).await?;
+        RtmpCommand::new("createStream", 4.0)
+            .send(w, 3, 0, self.chunk_size)
+            .await?;
 
         // 等待并处理 createStream 响应
         timeout(
@@ -315,17 +298,11 @@ impl Forwarder {
             "#{} [{}] publish to stream=\"{}\"",
             self.index, self.config.addr, stream
         );
-        send_rtmp_command(
-            w,
-            3,
-            self.stream_id,
-            self.chunk_size,
-            "publish",
-            5.0,
-            &[],
-            &[Amf0::String(stream.into()), Amf0::String("live".into())],
-        )
-        .await?;
+        RtmpCommand::new("publish", 5.0)
+            .arg(stream.as_str())
+            .arg("live")
+            .send(w, 3, self.stream_id, self.chunk_size)
+            .await?;
 
         // TODO, 等待并处理 publish 响应
         // self.handle_server_response(&mut response_rx, 5.0).await?;
@@ -446,31 +423,17 @@ impl Forwarder {
         ) {
             info!("#{} [{}] shutdown", self.index, self.config.addr);
 
-            send_rtmp_command(
-                w,
-                3,
-                self.stream_id,
-                self.chunk_size,
-                "FCUnpublish",
-                6.0,
-                &[],
-                &[Amf0::String(stream.into())],
-            )
-            .await
-            .ok();
+            RtmpCommand::new("FCUnpublish", 6.0)
+                .arg(stream)
+                .send(w, 3, self.stream_id, self.chunk_size)
+                .await
+                .ok();
 
-            send_rtmp_command(
-                w,
-                3,
-                self.stream_id,
-                self.chunk_size,
-                "deleteStream",
-                7.0,
-                &[],
-                &[Amf0::Number(1.0)],
-            )
-            .await
-            .ok();
+            RtmpCommand::new("deleteStream", 7.0)
+                .arg(1.0)
+                .send(w, 3, self.stream_id, self.chunk_size)
+                .await
+                .ok();
         }
     }
 }

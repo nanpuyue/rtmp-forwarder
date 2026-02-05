@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
-use crate::amf::{Amf0, AmfReader, amf_command_name};
+use crate::amf::{Amf0, AmfReader, RtmpCommand, amf_command_name};
 use crate::handshake::handshake_with_client;
 use crate::rtmp::write_rtmp_message2;
 use crate::rtmp_codec::RtmpMessageStream;
@@ -125,30 +125,15 @@ pub async fn handle_client(
                                 stream_manager.handle_connect(&stream.app_name).await
                             {
                                 warn!("Connection rejected: already publishing");
-                                crate::rtmp::send_rtmp_command(
-                                    &mut client_tx,
-                                    3,
-                                    0,
-                                    s2c_chunk,
-                                    "_error",
-                                    tx_num,
-                                    &[],
-                                    &[crate::amf::Amf0::Object(vec![
-                                        ("level".into(), crate::amf::Amf0::String("error".into())),
-                                        (
-                                            "code".into(),
-                                            crate::amf::Amf0::String(
-                                                "NetConnection.Connect.Rejected".into(),
-                                            ),
-                                        ),
-                                        (
-                                            "description".into(),
-                                            crate::amf::Amf0::String("Already publishing".into()),
-                                        ),
-                                    ])],
-                                )
-                                .await
-                                .ok();
+                                RtmpCommand::new("_error", tx_num)
+                                    .arg(vec![
+                                        ("level", "error"),
+                                        ("code", "NetConnection.Connect.Rejected"),
+                                        ("description", "Already publishing"),
+                                    ])
+                                    .send(&mut client_tx, 3, 0, s2c_chunk)
+                                    .await
+                                    .ok();
                                 break;
                             }
                             info!(
@@ -195,74 +180,40 @@ pub async fn handle_client(
                             s2c_chunk = 4096;
 
                             // _result(connect)
-                            crate::rtmp::send_rtmp_command(
-                                &mut client_tx,
-                                3,
-                                0,
-                                s2c_chunk,
-                                "_result",
-                                tx_num,
-                                &[
-                                    ("fmsVer", Amf0::String("FMS/3,0,1,123".into())),
-                                    ("capabilities", Amf0::Number(31.0)),
-                                ],
-                                &[Amf0::Object(vec![
-                                    ("level".into(), Amf0::String("status".into())),
-                                    (
-                                        "code".into(),
-                                        Amf0::String("NetConnection.Connect.Success".into()),
-                                    ),
-                                    (
-                                        "description".into(),
-                                        Amf0::String("Connection succeeded.".into()),
-                                    ),
-                                ])],
-                            )
-                            .await
-                            .ok();
+                            RtmpCommand::new("_result", tx_num)
+                                .object("fmsVer", "FMS/3,0,1,123")
+                                .object("capabilities", 31.0)
+                                .arg(vec![
+                                    ("level", "status"),
+                                    ("code", "NetConnection.Connect.Success"),
+                                    ("description", "Connection succeeded."),
+                                ])
+                                .send(&mut client_tx, 3, 0, s2c_chunk)
+                                .await
+                                .ok();
                         }
                         "createStream" if let Some(stream) = stream.as_mut() => {
                             match stream_manager.handle_create_stream().await {
                                 Ok(_) => {
                                     stream.state = StreamState::Idle;
-                                    crate::rtmp::send_rtmp_command(
-                                        &mut client_tx,
-                                        3,
-                                        0,
-                                        s2c_chunk,
-                                        "_result",
-                                        tx_num,
-                                        &[],
-                                        &[Amf0::Number(stream.stream_id as f64)],
-                                    )
-                                    .await
-                                    .ok();
+                                    RtmpCommand::new("_result", tx_num)
+                                        .arg(stream.stream_id as f64)
+                                        .send(&mut client_tx, 3, 0, s2c_chunk)
+                                        .await
+                                        .ok();
                                     info!("Created stream for client {}", client_id);
                                 }
                                 Err(StreamError::AlreadyPublishing) => {
                                     warn!("createStream rejected: already publishing");
-                                    crate::rtmp::send_rtmp_command(
-                                        &mut client_tx,
-                                        3,
-                                        0,
-                                        s2c_chunk,
-                                        "_error",
-                                        tx_num,
-                                        &[],
-                                        &[Amf0::Object(vec![
-                                            ("level".into(), Amf0::String("error".into())),
-                                            (
-                                                "code".into(),
-                                                Amf0::String("NetStream.Create.Failed".into()),
-                                            ),
-                                            (
-                                                "description".into(),
-                                                Amf0::String("Already publishing".into()),
-                                            ),
-                                        ])],
-                                    )
-                                    .await
-                                    .ok();
+                                    RtmpCommand::new("_error", tx_num)
+                                        .arg(vec![
+                                            ("level", "error"),
+                                            ("code", "NetStream.Create.Failed"),
+                                            ("description", "Already publishing"),
+                                        ])
+                                        .send(&mut client_tx, 3, 0, s2c_chunk)
+                                        .await
+                                        .ok();
                                 }
                                 _ => {}
                             }
@@ -273,35 +224,15 @@ pub async fn handle_client(
                             stream.stream_key = command_stream;
                             match stream_manager.handle_publish(stream_id, stream).await {
                                 Ok(_) => {
-                                    crate::rtmp::send_rtmp_command(
-                                        &mut client_tx,
-                                        3,
-                                        stream_id,
-                                        s2c_chunk,
-                                        "onStatus",
-                                        0.0,
-                                        &[],
-                                        &[crate::amf::Amf0::Object(vec![
-                                            (
-                                                "level".into(),
-                                                crate::amf::Amf0::String("status".into()),
-                                            ),
-                                            (
-                                                "code".into(),
-                                                crate::amf::Amf0::String(
-                                                    "NetStream.Publish.Start".into(),
-                                                ),
-                                            ),
-                                            (
-                                                "description".into(),
-                                                crate::amf::Amf0::String(
-                                                    "Publishing started.".into(),
-                                                ),
-                                            ),
-                                        ])],
-                                    )
-                                    .await
-                                    .ok();
+                                    RtmpCommand::new("onStatus", 0.0)
+                                        .arg(vec![
+                                            ("level", "status"),
+                                            ("code", "NetStream.Publish.Start"),
+                                            ("description", "Publishing started."),
+                                        ])
+                                        .send(&mut client_tx, 3, stream_id, s2c_chunk)
+                                        .await
+                                        .ok();
                                     info!("Client {client_id} publish to stream \"{stream_key}\"");
                                 }
                                 Err(e) => {
@@ -311,33 +242,15 @@ pub async fn handle_client(
                                         _ => "Publish failed",
                                     };
                                     warn!("publish rejected: {}", msg);
-                                    crate::rtmp::send_rtmp_command(
-                                        &mut client_tx,
-                                        3,
-                                        stream_id,
-                                        s2c_chunk,
-                                        "onStatus",
-                                        0.0,
-                                        &[],
-                                        &[crate::amf::Amf0::Object(vec![
-                                            (
-                                                "level".into(),
-                                                crate::amf::Amf0::String("error".into()),
-                                            ),
-                                            (
-                                                "code".into(),
-                                                crate::amf::Amf0::String(
-                                                    "NetStream.Publish.BadName".into(),
-                                                ),
-                                            ),
-                                            (
-                                                "description".into(),
-                                                crate::amf::Amf0::String(msg.into()),
-                                            ),
-                                        ])],
-                                    )
-                                    .await
-                                    .ok();
+                                    RtmpCommand::new("onStatus", 0.0)
+                                        .arg(vec![
+                                            ("level", "error"),
+                                            ("code", "NetStream.Publish.BadName"),
+                                            ("description", msg),
+                                        ])
+                                        .send(&mut client_tx, 3, stream_id, s2c_chunk)
+                                        .await
+                                        .ok();
                                 }
                             }
                         }
@@ -346,75 +259,45 @@ pub async fn handle_client(
                                 .handle_unpublish(stream_id, client_id)
                                 .await
                                 .ok();
-                            crate::rtmp::send_rtmp_command(
-                                &mut client_tx,
-                                3,
-                                stream_id,
-                                s2c_chunk,
-                                "onStatus",
-                                0.0,
-                                &[],
-                                &[Amf0::Object(vec![
-                                    ("level".into(), Amf0::String("status".into())),
-                                    (
-                                        "code".into(),
-                                        Amf0::String("NetStream.Unpublish.Success".into()),
-                                    ),
-                                    ("description".into(), Amf0::String("Unpublished.".into())),
-                                ])],
-                            )
-                            .await
-                            .ok();
+                            RtmpCommand::new("onStatus", 0.0)
+                                .arg(vec![
+                                    ("level", "status"),
+                                    ("code", "NetStream.Unpublish.Success"),
+                                    ("description", "Unpublished."),
+                                ])
+                                .send(&mut client_tx, 3, stream_id, s2c_chunk)
+                                .await
+                                .ok();
                         }
                         "closeStream" => {
                             stream_manager
                                 .handle_close_stream(stream_id, client_id)
                                 .await
                                 .ok();
-                            crate::rtmp::send_rtmp_command(
-                                &mut client_tx,
-                                3,
-                                stream_id,
-                                s2c_chunk,
-                                "onStatus",
-                                0.0,
-                                &[],
-                                &[Amf0::Object(vec![
-                                    ("level".into(), Amf0::String("status".into())),
-                                    (
-                                        "code".into(),
-                                        Amf0::String("NetStream.Unpublish.Success".into()),
-                                    ),
-                                    ("description".into(), Amf0::String("Stream closed.".into())),
-                                ])],
-                            )
-                            .await
-                            .ok();
+                            RtmpCommand::new("onStatus", 0.0)
+                                .arg(vec![
+                                    ("level", "status"),
+                                    ("code", "NetStream.Unpublish.Success"),
+                                    ("description", "Stream closed."),
+                                ])
+                                .send(&mut client_tx, 3, stream_id, s2c_chunk)
+                                .await
+                                .ok();
                         }
                         "deleteStream" => {
                             stream_manager
                                 .handle_delete_stream(stream_id, client_id)
                                 .await
                                 .ok();
-                            crate::rtmp::send_rtmp_command(
-                                &mut client_tx,
-                                3,
-                                stream_id,
-                                s2c_chunk,
-                                "onStatus",
-                                0.0,
-                                &[],
-                                &[Amf0::Object(vec![
-                                    ("level".into(), Amf0::String("status".into())),
-                                    (
-                                        "code".into(),
-                                        Amf0::String("NetStream.DeleteStream.Success".into()),
-                                    ),
-                                    ("description".into(), Amf0::String("Stream deleted.".into())),
-                                ])],
-                            )
-                            .await
-                            .ok();
+                            RtmpCommand::new("onStatus", 0.0)
+                                .arg(vec![
+                                    ("level", "status"),
+                                    ("code", "NetStream.DeleteStream.Success"),
+                                    ("description", "Stream deleted."),
+                                ])
+                                .send(&mut client_tx, 3, stream_id, s2c_chunk)
+                                .await
+                                .ok();
                             break;
                         }
                         _ => {}

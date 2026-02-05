@@ -3,7 +3,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::trace;
 
-use crate::rtmp_codec::RtmpMessage;
+use crate::rtmp_codec::{RtmpMessage, RtmpMessageIter};
 
 /* ================= AMF0 ================= */
 
@@ -231,15 +231,18 @@ impl RtmpCommand {
         self
     }
 
-    pub fn to_payload(&self) -> Bytes {
+    pub fn payload(&self) -> Bytes {
         let mut buf = BytesMut::new();
         amf_write_string(&mut buf, &self.name);
         amf_write_number(&mut buf, self.transaction_id);
         if self.command_object.is_empty() {
             amf_write_null(&mut buf);
         } else {
-            let items: Vec<(&str, Amf0)> = self.command_object.iter()
-                .map(|(k, v)| (k.as_str(), v.clone())).collect();
+            let items: Vec<(&str, Amf0)> = self
+                .command_object
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.clone()))
+                .collect();
             amf_write_object(&mut buf, &items);
         }
         for arg in &self.args {
@@ -248,12 +251,22 @@ impl RtmpCommand {
         buf.freeze()
     }
 
-    pub async fn send<S>(&self, stream: &mut S, csid: u8, stream_id: u32, chunk_size: usize) -> Result<()>
+    pub async fn send<S>(
+        &self,
+        w: &mut S,
+        csid: u8,
+        stream_id: u32,
+        chunk_size: usize,
+    ) -> Result<()>
     where
         S: AsyncWrite + Unpin,
     {
-        let payload = self.to_payload();
-        crate::rtmp::write_rtmp_message2(stream, csid, 0, 20, stream_id, &payload, chunk_size).await
+        for chunk in
+            RtmpMessageIter::new_with_payload(csid, 0, 20, stream_id, chunk_size, &self.payload())
+        {
+            w.write_all(chunk.raw_bytes()).await?;
+        }
+        Ok(())
     }
 }
 
@@ -281,8 +294,8 @@ impl From<bool> for Amf0 {
     }
 }
 
-impl From<Vec<(String, Amf0)>> for Amf0 {
-    fn from(obj: Vec<(String, Amf0)>) -> Self {
-        Amf0::Object(obj)
+impl<K: Into<String>, V: Into<Amf0>> From<Vec<(K, V)>> for Amf0 {
+    fn from(obj: Vec<(K, V)>) -> Self {
+        Amf0::Object(obj.into_iter().map(|(k, v)| (k.into(), v.into())).collect())
     }
 }
