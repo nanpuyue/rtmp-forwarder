@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
-use crate::amf::{Amf0, AmfReader, RtmpCommand, amf_command_name};
+use crate::amf::{Amf0, AmfReader, RtmpCommand, rtmp_command};
 use crate::handshake::handshake_with_client;
 use crate::rtmp::write_rtmp_message2;
 use crate::rtmp_codec::RtmpMessageStream;
@@ -73,7 +73,7 @@ pub async fn handle_client(
         let mut command_stream = None;
         if msg.header().msg_type == 20 {
             let payload = msg.payload();
-            if let Ok(cmd) = amf_command_name(&payload) {
+            if let Ok(cmd) = rtmp_command(&payload) {
                 let mut r = AmfReader::new(&payload);
                 let _ = r.read_string();
                 match cmd.as_str() {
@@ -113,7 +113,7 @@ pub async fn handle_client(
             20 => {
                 let stream_id = msg.header().stream_id;
                 let payload = msg.payload();
-                if let Ok(cmd) = amf_command_name(&payload) {
+                if let Ok(cmd) = rtmp_command(&payload) {
                     let mut reader = AmfReader::new(&payload);
                     let _ = reader.read_string(); // name
                     let tx_num = reader.read_number().unwrap_or(0.0);

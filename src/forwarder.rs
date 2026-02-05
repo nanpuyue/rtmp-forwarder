@@ -10,7 +10,7 @@ use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
-use crate::amf::{AmfReader, RtmpCommand, amf_command_name};
+use crate::amf::{AmfReader, RtmpCommand, rtmp_command};
 use crate::handshake::handshake_with_server;
 use crate::rtmp::{write_rtmp_message, write_rtmp_message2};
 use crate::rtmp_codec::{RtmpMessage, RtmpMessageStream};
@@ -334,7 +334,7 @@ impl Forwarder {
             }
 
             let payload = response.payload();
-            if let Ok(cmd) = amf_command_name(&payload) {
+            if let Ok(cmd) = rtmp_command(&payload) {
                 let mut reader: AmfReader<'_> = AmfReader::new(&payload);
                 let _ = reader.read_string(); // name
                 let tx_id = reader.read_number()?; // tx_id
