@@ -4,12 +4,13 @@ use anyhow::Result;
 use bytes::Bytes;
 use tokio::net::{TcpStream, tcp};
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
-use crate::amf::{Amf0, amf_command_name};
+use crate::amf::{Amf0, AmfReader, amf_command_name};
 use crate::handshake::handshake_with_server;
 use crate::rtmp::{send_rtmp_command, write_rtmp_message, write_rtmp_message2};
 use crate::rtmp_codec::{RtmpMessage, RtmpMessageStream};
@@ -75,6 +76,7 @@ impl ConnectionState {
 pub struct Forwarder {
     pub index: usize,
     pub chunk_size: usize,
+    pub stream_id: u32,
     pub config: ForwarderConfig,
     pub rx: mpsc::Receiver<ForwardEvent>,
     pub snapshot: ProtocolSnapshot,
@@ -89,7 +91,7 @@ impl Forwarder {
 
         while let Some(event) = self.rx.recv().await {
             match event {
-                ForwardEvent::Message(msg) => {
+                ForwardEvent::Message(mut msg) => {
                     // 元数据与序列头：如果转发器启动时客户端尚未发送则后续原样转发
                     // 若客户端已经发送则可从快照中获取
                     // self.snapshot.update_from_message(&msg);
@@ -130,6 +132,7 @@ impl Forwarder {
 
                     // Forward media data if connected
                     if let Some(ref mut w) = state.conn {
+                        msg.set_stream_id(self.stream_id);
                         if let Err(e) = write_rtmp_message(w, &msg, self.chunk_size).await {
                             error!("[{}] Write error: {}", self.config.addr, e);
                             state.conn = None;
@@ -154,7 +157,7 @@ impl Forwarder {
     }
 
     /// Attempt to connect and perform RTMP handshake + setup.
-    async fn try_connect(&self) -> Option<tcp::OwnedWriteHalf> {
+    async fn try_connect(&mut self) -> Option<tcp::OwnedWriteHalf> {
         let mut addr = self.config.addr.clone();
         if !addr.contains(':') {
             addr.push_str(":1935");
@@ -217,21 +220,21 @@ impl Forwarder {
 
     /// Perform the standard RTMP publishing command sequence.
     async fn setup_protocol(
-        &self,
+        &mut self,
         w: &mut tcp::OwnedWriteHalf,
         mut response_rx: mpsc::Receiver<RtmpMessage>,
     ) -> Result<()> {
-        let app = self
+        let app = &self
             .config
             .app
-            .as_deref()
-            .or(self.snapshot.client_app.as_deref())
+            .clone()
+            .or(self.snapshot.client_app.clone())
             .unwrap_or_default();
-        let stream = self
+        let stream = &self
             .config
             .stream
-            .as_deref()
-            .or(self.snapshot.client_stream.as_deref())
+            .clone()
+            .or(self.snapshot.client_stream.clone())
             .unwrap_or_default();
 
         // 1. connect
@@ -260,9 +263,11 @@ impl Forwarder {
         .await?;
 
         // 等待并处理 connect 响应
-        if let Ok(Some(response)) = timeout(Duration::from_secs(5), response_rx.recv()).await {
-            self.handle_server_response(&response).await?;
-        }
+        timeout(
+            Duration::from_secs(5),
+            self.handle_server_response(&mut response_rx, 1.0),
+        )
+        .await??;
 
         // 设置 chunk size
         write_rtmp_message2(
@@ -293,20 +298,17 @@ impl Forwarder {
                 &[Amf0::String(stream.into())],
             )
             .await?;
-
-            // 等待并处理响应
-            if let Ok(Some(response)) = timeout(Duration::from_secs(5), response_rx.recv()).await {
-                self.handle_server_response(&response).await?;
-            }
         }
 
         // 4. Create the logical stream
         send_rtmp_command(w, 3, 0, self.chunk_size, "createStream", 4.0, &[], &[]).await?;
 
         // 等待并处理 createStream 响应
-        if let Ok(Some(response)) = timeout(Duration::from_secs(5), response_rx.recv()).await {
-            self.handle_server_response(&response).await?;
-        }
+        timeout(
+            Duration::from_secs(5),
+            self.handle_server_response(&mut response_rx, 4.0),
+        )
+        .await??;
 
         // 5. Start publishing as "live"
         info!(
@@ -316,7 +318,7 @@ impl Forwarder {
         send_rtmp_command(
             w,
             3,
-            1,
+            self.stream_id,
             self.chunk_size,
             "publish",
             5.0,
@@ -325,59 +327,105 @@ impl Forwarder {
         )
         .await?;
 
-        // 等待并处理 publish 响应
-        if let Ok(Some(response)) = timeout(Duration::from_secs(5), response_rx.recv()).await {
-            self.handle_server_response(&response).await?;
-        }
+        // TODO, 等待并处理 publish 响应
+        // self.handle_server_response(&mut response_rx, 5.0).await?;
 
         // 6. Sync initial state (MetaData + Sequence Headers) so the stream can be decoded instantly
-        if let Some(ref m) = self.snapshot.metadata {
-            let mut m = m.clone();
-            m.set_timestamp(0);
-            write_rtmp_message(w, &m, self.chunk_size).await.ok();
-        }
-        if let Some(ref v) = self.snapshot.video_seq_hdr {
-            let mut v = v.clone();
-            v.set_timestamp(0);
-            write_rtmp_message(w, &v, self.chunk_size).await.ok();
-        }
-        if let Some(ref a) = self.snapshot.audio_seq_hdr {
-            let mut a = a.clone();
-            a.set_timestamp(0);
-            write_rtmp_message(w, &a, self.chunk_size).await.ok();
+        for m in [
+            &self.snapshot.metadata,
+            &self.snapshot.video_seq_hdr,
+            &self.snapshot.audio_seq_hdr,
+        ] {
+            if let Some(m) = m {
+                let m = &mut m.clone();
+                m.set_stream_id(self.stream_id);
+                write_rtmp_message(w, m, self.chunk_size).await?;
+            }
         }
         Ok(())
     }
 
     /// 处理服务器响应
-    async fn handle_server_response(&self, response: &RtmpMessage) -> Result<()> {
-        if response.header().msg_type != 20 {
-            return Ok(());
-        }
+    async fn handle_server_response(
+        &mut self,
+        response_rx: &mut Receiver<RtmpMessage>,
+        expect_tx_id: f64,
+    ) -> Result<()> {
+        while let Some(response) = timeout(Duration::from_secs(5), response_rx.recv()).await? {
+            if response.header().msg_type != 20 {
+                continue;
+            }
 
-        let payload = response.payload();
-        if let Ok(cmd) = amf_command_name(&payload) {
-            // let mut reader: AmfReader<'_> = AmfReader::new(&payload);
-            // let _ = reader.read_string(); // name
-            // let _ = reader.read_number(); // tx_id
-            // let _ = reader.read_null();
+            let payload = response.payload();
+            if let Ok(cmd) = amf_command_name(&payload) {
+                let mut reader: AmfReader<'_> = AmfReader::new(&payload);
+                let _ = reader.read_string(); // name
+                let tx_id = reader.read_number()?; // tx_id
+                let _ = reader.read_null();
 
-            // TODO
-            match cmd.as_str() {
-                "_result" => {}
-                "_error" => {
-                    warn!(
-                        "#{} [{}] received _error response",
-                        self.index, self.config.addr
-                    );
-                    return Err(anyhow::anyhow!("Error"));
+                match cmd.as_str() {
+                    "_result" => {
+                        // 处理 _result 响应
+                        match tx_id {
+                            1.0 => {
+                                // connect 响应
+                                debug!("#{} [{}] connect success", self.index, self.config.addr);
+                            }
+                            2.0 => {
+                                // releaseStream 响应
+                                debug!(
+                                    "#{} [{}] releaseStream success",
+                                    self.index, self.config.addr
+                                );
+                            }
+                            3.0 => {
+                                // FCPublish 响应
+                                debug!("#{} [{}] FCPublish success", self.index, self.config.addr);
+                            }
+                            4.0 => {
+                                // createStream 响应，获取 stream_id
+                                if let Ok(stream_id) = reader.read_number() {
+                                    self.stream_id = stream_id as u32;
+                                    info!(
+                                        "#{} [{}] createStream success, stream_id: {}",
+                                        self.index, self.config.addr, self.stream_id
+                                    );
+                                } else {
+                                    warn!(
+                                        "#{} [{}] createStream success but no stream_id",
+                                        self.index, self.config.addr
+                                    );
+                                }
+                            }
+                            _ => {
+                                debug!(
+                                    "#{} [{}] unknown _result tx_id: {}",
+                                    self.index, self.config.addr, tx_id
+                                );
+                            }
+                        }
+                    }
+                    "_error" => {
+                        warn!(
+                            "#{} [{}] received _error response tx_id: {}",
+                            self.index, self.config.addr, tx_id
+                        );
+                        return Err(anyhow::anyhow!("Error: tx_id={tx_id}"));
+                    }
+                    "onStatus" => {
+                        // TODO, 处理 onStatus 响应
+                        debug!("#{} [{}] onStatus", self.index, self.config.addr);
+                    }
+                    _ => {
+                        debug!(
+                            "#{} [{}] unknown response: {}",
+                            self.index, self.config.addr, cmd
+                        );
+                    }
                 }
-                "onStatus" => {}
-                _ => {
-                    debug!(
-                        "#{} [{}] unknown response: {}",
-                        self.index, self.config.addr, cmd
-                    );
+
+                if tx_id == expect_tx_id {
+                    break;
                 }
             }
         }
@@ -401,7 +449,7 @@ impl Forwarder {
             send_rtmp_command(
                 w,
                 3,
-                1,
+                self.stream_id,
                 self.chunk_size,
                 "FCUnpublish",
                 6.0,
@@ -414,7 +462,7 @@ impl Forwarder {
             send_rtmp_command(
                 w,
                 3,
-                1,
+                self.stream_id,
                 self.chunk_size,
                 "deleteStream",
                 7.0,

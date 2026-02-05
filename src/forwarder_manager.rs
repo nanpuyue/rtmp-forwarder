@@ -109,6 +109,7 @@ impl ForwarderManager {
         let forwarder = Forwarder {
             index,
             chunk_size,
+            stream_id: 1,
             config: config.clone(),
             rx,
             snapshot: crate::forwarder::ProtocolSnapshot {

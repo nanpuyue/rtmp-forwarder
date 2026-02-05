@@ -1,6 +1,6 @@
-use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::{io, mem};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt};
@@ -46,13 +46,27 @@ impl RtmpChunk {
     pub fn header(&self) -> &RtmpChunkHeader {
         &self.header
     }
-    
+
     pub fn raw_bytes(&self) -> &Bytes {
         &self.raw_bytes
     }
 
     pub fn payload(&self) -> Bytes {
         self.raw_bytes.slice(self.payload_offset..)
+    }
+
+    pub fn set_stream_id(&mut self, id: u32) {
+        if id != self.header.stream_id {
+            self.header.stream_id = id;
+
+            // 仅 fmt=0 包含 stream_id 字段
+            if self.header.fmt == 0 {
+                let raw_bytes = mem::replace(&mut self.raw_bytes, Bytes::new());
+                let mut buf = BytesMut::from(raw_bytes);
+                buf[8..12].copy_from_slice(&id.to_le_bytes());
+                self.raw_bytes = buf.freeze();
+            }
+        }
     }
 }
 
@@ -89,8 +103,13 @@ impl RtmpMessage {
         &self.chunks
     }
 
-    pub fn set_timestamp(&mut self, timestamp: u32) {
-        self.header.timestamp = timestamp;
+    pub fn set_stream_id(&mut self, id: u32) {
+        if id != self.header.stream_id {
+            self.header.stream_id = id;
+            for chunk in &mut self.chunks {
+                chunk.set_stream_id(id);
+            }
+        }
     }
 }
 

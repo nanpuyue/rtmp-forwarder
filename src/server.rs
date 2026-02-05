@@ -16,6 +16,7 @@ use crate::rtmp_codec::RtmpMessageStream;
 use crate::stream_manager::{StreamError, StreamInfo, StreamManager, StreamState};
 
 static CLIENT_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
+const DEFAULT_STREAM_ID: u32 = 1;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ForwarderConfig {
@@ -44,7 +45,7 @@ pub async fn handle_client(
     let mut s2c_chunk = 128usize;
 
     let mut stream = Some(StreamInfo {
-        stream_id: 1,
+        stream_id: DEFAULT_STREAM_ID,
         client_id,
         app_name: None,
         stream_key: None,
@@ -110,6 +111,7 @@ pub async fn handle_client(
                 }
             }
             20 => {
+                let stream_id = msg.header().stream_id;
                 let payload = msg.payload();
                 if let Ok(cmd) = amf_command_name(&payload) {
                     let mut reader = AmfReader::new(&payload);
@@ -269,12 +271,12 @@ pub async fn handle_client(
                         "publish" if let Some(mut stream) = stream.take() => {
                             let stream_key = command_stream.clone().unwrap_or_default();
                             stream.stream_key = command_stream;
-                            match stream_manager.handle_publish(1, stream).await {
+                            match stream_manager.handle_publish(stream_id, stream).await {
                                 Ok(_) => {
                                     crate::rtmp::send_rtmp_command(
                                         &mut client_tx,
                                         3,
-                                        1,
+                                        stream_id,
                                         s2c_chunk,
                                         "onStatus",
                                         0.0,
@@ -312,7 +314,7 @@ pub async fn handle_client(
                                     crate::rtmp::send_rtmp_command(
                                         &mut client_tx,
                                         3,
-                                        1,
+                                        stream_id,
                                         s2c_chunk,
                                         "onStatus",
                                         0.0,
@@ -340,11 +342,14 @@ pub async fn handle_client(
                             }
                         }
                         "FCUnpublish" => {
-                            stream_manager.handle_unpublish(1, client_id).await.ok();
+                            stream_manager
+                                .handle_unpublish(stream_id, client_id)
+                                .await
+                                .ok();
                             crate::rtmp::send_rtmp_command(
                                 &mut client_tx,
                                 3,
-                                1,
+                                stream_id,
                                 s2c_chunk,
                                 "onStatus",
                                 0.0,
@@ -362,11 +367,14 @@ pub async fn handle_client(
                             .ok();
                         }
                         "closeStream" => {
-                            stream_manager.handle_close_stream(1, client_id).await.ok();
+                            stream_manager
+                                .handle_close_stream(stream_id, client_id)
+                                .await
+                                .ok();
                             crate::rtmp::send_rtmp_command(
                                 &mut client_tx,
                                 3,
-                                1,
+                                stream_id,
                                 s2c_chunk,
                                 "onStatus",
                                 0.0,
@@ -384,11 +392,14 @@ pub async fn handle_client(
                             .ok();
                         }
                         "deleteStream" => {
-                            stream_manager.handle_delete_stream(1, client_id).await.ok();
+                            stream_manager
+                                .handle_delete_stream(stream_id, client_id)
+                                .await
+                                .ok();
                             crate::rtmp::send_rtmp_command(
                                 &mut client_tx,
                                 3,
-                                1,
+                                stream_id,
                                 s2c_chunk,
                                 "onStatus",
                                 0.0,
