@@ -1,6 +1,9 @@
 use anyhow::{Result, anyhow};
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::trace;
+
+use crate::rtmp_codec::RtmpMessage;
 
 /* ================= AMF0 ================= */
 
@@ -147,11 +150,139 @@ impl<'a> AmfReader<'a> {
         amf_read_number(&mut self.data)
     }
 
+    pub fn read_boolean(&mut self) -> Result<bool> {
+        amf_read_boolean(&mut self.data)
+    }
+
     pub fn read_null(&mut self) -> Result<()> {
         amf_read_null(&mut self.data)
     }
 
     pub fn read_object(&mut self) -> Result<Vec<(String, Amf0)>> {
         amf_read_object(&mut self.data)
+    }
+}
+
+/* ================= RtmpCommand ================= */
+
+#[derive(Clone, Debug)]
+pub struct RtmpCommand {
+    pub name: String,
+    pub transaction_id: f64,
+    pub command_object: Vec<(String, Amf0)>,
+    pub args: Vec<Amf0>,
+}
+
+impl RtmpMessage {
+    pub fn command(msg: &RtmpMessage) -> Result<RtmpCommand> {
+        if msg.header().msg_type != 20 {
+            return Err(anyhow!("not a command message"));
+        }
+        let payload = msg.payload();
+        let mut reader = AmfReader::new(&payload);
+        let name = reader.read_string()?;
+        let transaction_id = reader.read_number()?;
+        let command_object = if reader.data.first() == Some(&0x05) {
+            reader.read_null()?;
+            Vec::new()
+        } else {
+            reader.read_object()?
+        };
+        let mut args = Vec::new();
+        while !reader.data.is_empty() {
+            match reader.data[0] {
+                0x00 => args.push(Amf0::Number(reader.read_number()?)),
+                0x01 => args.push(Amf0::Boolean(reader.read_boolean()?)),
+                0x02 => args.push(Amf0::String(reader.read_string()?)),
+                0x03 => args.push(Amf0::Object(reader.read_object()?)),
+                0x05 => {
+                    reader.read_null()?;
+                    break;
+                }
+                _ => break,
+            }
+        }
+        Ok(RtmpCommand {
+            name,
+            transaction_id,
+            command_object,
+            args,
+        })
+    }
+}
+
+impl RtmpCommand {
+    pub fn new(name: impl Into<String>, transaction_id: f64) -> Self {
+        Self {
+            name: name.into(),
+            transaction_id,
+            command_object: Vec::new(),
+            args: Vec::new(),
+        }
+    }
+
+    pub fn object<T: Into<Amf0>>(mut self, key: impl Into<String>, value: T) -> Self {
+        self.command_object.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn arg<T: Into<Amf0>>(mut self, value: T) -> Self {
+        self.args.push(value.into());
+        self
+    }
+
+    pub fn to_payload(&self) -> Bytes {
+        let mut buf = BytesMut::new();
+        amf_write_string(&mut buf, &self.name);
+        amf_write_number(&mut buf, self.transaction_id);
+        if self.command_object.is_empty() {
+            amf_write_null(&mut buf);
+        } else {
+            let items: Vec<(&str, Amf0)> = self.command_object.iter()
+                .map(|(k, v)| (k.as_str(), v.clone())).collect();
+            amf_write_object(&mut buf, &items);
+        }
+        for arg in &self.args {
+            amf_write_value(&mut buf, arg);
+        }
+        buf.freeze()
+    }
+
+    pub async fn send<S>(&self, stream: &mut S, csid: u8, stream_id: u32, chunk_size: usize) -> Result<()>
+    where
+        S: AsyncWrite + Unpin,
+    {
+        let payload = self.to_payload();
+        crate::rtmp::write_rtmp_message2(stream, csid, 0, 20, stream_id, &payload, chunk_size).await
+    }
+}
+
+impl From<&str> for Amf0 {
+    fn from(s: &str) -> Self {
+        Amf0::String(s.to_string())
+    }
+}
+
+impl From<String> for Amf0 {
+    fn from(s: String) -> Self {
+        Amf0::String(s)
+    }
+}
+
+impl From<f64> for Amf0 {
+    fn from(n: f64) -> Self {
+        Amf0::Number(n)
+    }
+}
+
+impl From<bool> for Amf0 {
+    fn from(b: bool) -> Self {
+        Amf0::Boolean(b)
+    }
+}
+
+impl From<Vec<(String, Amf0)>> for Amf0 {
+    fn from(obj: Vec<(String, Amf0)>) -> Self {
+        Amf0::Object(obj)
     }
 }
