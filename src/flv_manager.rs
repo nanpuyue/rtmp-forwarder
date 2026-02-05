@@ -80,7 +80,7 @@ impl FlvManager {
             .unwrap_or_default();
         // 使用快照创建FLV头部，包含序列头
         let snapshot = self.stream_manager.get_stream_snapshot().await;
-        let mut header = self.create_flv_header(snapshot.as_ref()).await;
+        let mut header = self.create_flv_header(snapshot).await;
         header.extend_from_slice(&first_keyframe);
 
         // 返回广播通道订阅者和带首包的头部数据
@@ -88,15 +88,27 @@ impl FlvManager {
     }
 
     fn rtmp_to_flv(&self, msg: &RtmpMessage) -> Option<Bytes> {
-        match msg.header().msg_type {
-            8 => Some(self.create_flv_audio_tag(&msg.payload(), msg.header().timestamp)),
-            9 => Some(self.create_flv_video_tag(&msg.payload(), msg.header().timestamp)),
-            18 => Some(self.create_flv_script_tag(&msg.payload(), msg.header().timestamp)),
+        let h = msg.header();
+        match h.msg_type {
+            8 | 9 | 18 => {
+                let mut buf = BytesMut::with_capacity(11 + h.msg_len + 4);
+
+                buf.put_u8(h.msg_type);
+                buf.put_u24(h.msg_len as u32);
+                buf.put_u24(h.timestamp); // 时间戳，低 24 位
+                buf.put_u32(h.timestamp & 0xff000000); // stream id, 高 8 位为扩展时间戳
+                for chunk in msg.chunks() {
+                    buf.extend_from_slice(&chunk.payload());
+                }
+                buf.put_u32(11 + h.msg_len as u32);
+
+                Some(buf.freeze())
+            }
             _ => None,
         }
     }
 
-    async fn create_flv_header(&self, snapshot: Option<&StreamSnapshot>) -> BytesMut {
+    async fn create_flv_header(&self, snapshot: Option<StreamSnapshot>) -> BytesMut {
         let mut buf = BytesMut::new();
 
         // 添加 FLV 文件头
@@ -114,15 +126,15 @@ impl FlvManager {
         // 根据快照添加序列头
         if let Some(snapshot) = snapshot {
             // 添加视频序列头（假设一定有视频序列头）
-            if let Some(ref video_hdr) = snapshot.video_seq_hdr {
-                let flv_tag = self.create_flv_video_tag(video_hdr, 0);
-                buf.extend_from_slice(&flv_tag);
+            if let Some(ref video_hdr) = snapshot.video_seq_hdr.and_then(|x| self.rtmp_to_flv(&x)) {
+                buf.extend_from_slice(&video_hdr);
 
                 // 只有在有视频头的情况下才处理音频头或设置音频标记位
-                if let Some(ref audio_hdr) = snapshot.audio_seq_hdr {
+                if let Some(ref audio_hdr) =
+                    snapshot.audio_seq_hdr.and_then(|x| self.rtmp_to_flv(&x))
+                {
                     // 有视频头和音频头
-                    let flv_tag = self.create_flv_audio_tag(audio_hdr, 0);
-                    buf.extend_from_slice(&flv_tag);
+                    buf.extend_from_slice(&audio_hdr);
                 } else {
                     // 有视频头但无音频头，将音频标记位设为0，只保留视频标记 (bit 0 = 1)
                     buf[4] = 1;
@@ -131,31 +143,5 @@ impl FlvManager {
         }
 
         buf
-    }
-
-    fn create_flv_audio_tag(&self, data: &Bytes, timestamp: u32) -> Bytes {
-        self.create_flv_tag(8, data, timestamp)
-    }
-
-    fn create_flv_video_tag(&self, data: &Bytes, timestamp: u32) -> Bytes {
-        self.create_flv_tag(9, data, timestamp)
-    }
-
-    fn create_flv_script_tag(&self, data: &Bytes, timestamp: u32) -> Bytes {
-        self.create_flv_tag(18, data, timestamp)
-    }
-
-    fn create_flv_tag(&self, tag_type: u8, data: &Bytes, timestamp: u32) -> Bytes {
-        let data_size = data.len() as u32;
-        let mut buf = BytesMut::with_capacity(11 + data.len() + 4);
-
-        buf.put_u8(tag_type);
-        buf.put_u24(data_size);
-        buf.put_u24(timestamp); // 时间戳，低 24 位
-        buf.put_u32(timestamp & 0xff000000); // stream id, 高 8 位为扩展时间戳
-        buf.extend_from_slice(data);
-        buf.put_u32(11 + data_size);
-
-        buf.freeze()
     }
 }

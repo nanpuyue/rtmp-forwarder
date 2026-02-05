@@ -43,10 +43,6 @@ pub struct RtmpChunk {
 }
 
 impl RtmpChunk {
-    pub fn header(&self) -> &RtmpChunkHeader {
-        &self.header
-    }
-
     pub fn raw_bytes(&self) -> &Bytes {
         &self.raw_bytes
     }
@@ -87,10 +83,6 @@ pub struct RtmpMessage {
 }
 
 impl RtmpMessage {
-    pub fn csid(&self) -> u8 {
-        self.csid
-    }
-
     pub fn header(&self) -> &RtmpMessageHeader {
         &self.header
     }
@@ -148,34 +140,6 @@ impl From<RtmpChunkHeader> for RtmpMessageHeader {
 }
 
 impl RtmpMessage {
-    pub fn new_with_payload(
-        csid: u8,
-        timestamp: u32,
-        msg_type: u8,
-        stream_id: u32,
-        chunk_size: usize,
-        payload: &Bytes,
-    ) -> Self {
-        let header = RtmpMessageHeader {
-            timestamp,
-            msg_len: payload.len(),
-            msg_type,
-            stream_id,
-        };
-
-        let chunks = RtmpMessageIter::new_with_payload(
-            csid, timestamp, msg_type, stream_id, chunk_size, payload,
-        )
-        .collect();
-
-        Self {
-            csid,
-            header,
-            chunk_size,
-            chunks,
-        }
-    }
-
     pub fn payload(&self) -> Bytes {
         let mut buf = BytesMut::with_capacity(self.header.msg_len);
         for chunk in &self.chunks {

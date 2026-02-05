@@ -101,7 +101,7 @@ impl ForwarderManager {
         &self,
         index: usize,
         config: &ForwarderConfig,
-        snapshot: &StreamSnapshot,
+        snapshot: StreamSnapshot,
     ) -> mpsc::Sender<ForwardEvent> {
         let chunk_size = snapshot.chunk_size;
         let (tx, rx) = mpsc::channel(128);
@@ -113,18 +113,9 @@ impl ForwarderManager {
             config: config.clone(),
             rx,
             snapshot: crate::forwarder::ProtocolSnapshot {
-                metadata: snapshot
-                    .metadata
-                    .as_ref()
-                    .map(|b| RtmpMessage::new_with_payload(3, 0, 18, 1, chunk_size, b)),
-                video_seq_hdr: snapshot
-                    .video_seq_hdr
-                    .as_ref()
-                    .map(|b| RtmpMessage::new_with_payload(4, 0, 9, 1, chunk_size, b)),
-                audio_seq_hdr: snapshot
-                    .audio_seq_hdr
-                    .as_ref()
-                    .map(|b| RtmpMessage::new_with_payload(5, 0, 8, 1, chunk_size, b)),
+                metadata: snapshot.metadata,
+                video_seq_hdr: snapshot.video_seq_hdr,
+                audio_seq_hdr: snapshot.audio_seq_hdr,
                 client_app: snapshot.app_name.clone(),
                 client_stream: snapshot.stream_key.clone(),
             },
@@ -194,7 +185,7 @@ impl ForwarderManager {
                 }
                 (Some(new), None) if new.enabled => {
                     // Enabled and not running, start
-                    let tx = self.start_forwarder(index, new, &snapshot).await;
+                    let tx = self.start_forwarder(index, new, snapshot.clone()).await;
                     *forwarder = Some(tx);
                     started += 1;
                 }
@@ -206,7 +197,7 @@ impl ForwarderManager {
                         // Restart
                         let tx = forwarder.take().unwrap();
                         self.stop_forwarder(index, tx).await;
-                        let tx = self.start_forwarder(index, new, &snapshot).await;
+                        let tx = self.start_forwarder(index, new, snapshot.clone()).await;
                         *forwarder = Some(tx);
                         restarted += 1;
                     }

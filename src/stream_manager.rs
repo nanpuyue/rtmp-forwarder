@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use bytes::Bytes;
 use tokio::sync::{RwLock, broadcast};
 
 use crate::rtmp_codec::RtmpMessage;
@@ -34,9 +33,9 @@ pub struct StreamSnapshot {
     pub chunk_size: usize,
     pub app_name: Option<String>,
     pub stream_key: Option<String>,
-    pub metadata: Option<Bytes>,
-    pub video_seq_hdr: Option<Bytes>,
-    pub audio_seq_hdr: Option<Bytes>,
+    pub metadata: Option<RtmpMessage>,
+    pub video_seq_hdr: Option<RtmpMessage>,
+    pub audio_seq_hdr: Option<RtmpMessage>,
     pub orig_dest_addr: Option<String>,
 }
 
@@ -49,9 +48,9 @@ pub struct StreamInfo {
     pub state: StreamState,
     pub last_active: Instant,
     pub chunk_szie: usize,
-    pub metadata: Option<Bytes>,
-    pub video_seq_hdr: Option<Bytes>,
-    pub audio_seq_hdr: Option<Bytes>,
+    pub metadata: Option<RtmpMessage>,
+    pub video_seq_hdr: Option<RtmpMessage>,
+    pub audio_seq_hdr: Option<RtmpMessage>,
     pub orig_dest_addr: Option<String>,
 }
 
@@ -89,13 +88,13 @@ impl StreamManager {
             let payload = msg.first_chunk_payload();
             match msg.header().msg_type {
                 18 | 15 => {
-                    s.metadata = Some(msg.payload());
+                    s.metadata = Some(msg.clone());
                 }
                 9 if payload.len() >= 2 && payload[0] == 0x17 && payload[1] == 0 => {
-                    s.video_seq_hdr = Some(msg.payload());
+                    s.video_seq_hdr = Some(msg.clone());
                 }
                 8 if payload.len() >= 2 && (payload[0] >> 4) == 10 && payload[1] == 0 => {
-                    s.audio_seq_hdr = Some(msg.payload());
+                    s.audio_seq_hdr = Some(msg.clone());
                 }
                 _ => {}
             }
