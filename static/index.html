@@ -635,6 +635,11 @@
                 player = null;
             }
             isPlaying = false;
+
+            // 重置视频元素样式，确保下次播放时能正确应用16:9比例
+            const video = document.getElementById('video');
+            video.style.aspectRatio = '16/9';
+            video.style.objectFit = 'cover';
         }
 
 
