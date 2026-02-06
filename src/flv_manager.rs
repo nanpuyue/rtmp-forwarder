@@ -127,14 +127,14 @@ impl FlvManager {
         if let Some(snapshot) = snapshot {
             // 添加视频序列头（假设一定有视频序列头）
             if let Some(ref video_hdr) = snapshot.video_seq_hdr.and_then(|x| self.rtmp_to_flv(&x)) {
-                buf.extend_from_slice(&video_hdr);
+                buf.extend_from_slice(video_hdr);
 
                 // 只有在有视频头的情况下才处理音频头或设置音频标记位
                 if let Some(ref audio_hdr) =
                     snapshot.audio_seq_hdr.and_then(|x| self.rtmp_to_flv(&x))
                 {
                     // 有视频头和音频头
-                    buf.extend_from_slice(&audio_hdr);
+                    buf.extend_from_slice(audio_hdr);
                 } else {
                     // 有视频头但无音频头，将音频标记位设为0，只保留视频标记 (bit 0 = 1)
                     buf[4] = 1;

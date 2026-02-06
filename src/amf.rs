@@ -23,7 +23,7 @@ impl Amf0 {
         }
     }
 
-    pub fn to_string(self) -> Option<String> {
+    pub fn into_string(self) -> Option<String> {
         match self {
             Amf0::String(s) => Some(s),
             _ => None,
@@ -51,7 +51,7 @@ impl Amf0 {
         }
     }
 
-    pub fn to_object(self) -> Option<Vec<(String, Amf0)>> {
+    pub fn into_object(self) -> Option<Vec<(String, Amf0)>> {
         match self {
             Amf0::Object(obj) => Some(obj),
             _ => None,
@@ -75,7 +75,7 @@ impl Value for ObjectItem {
     }
 
     fn to_string(self) -> Option<(String, String)> {
-        self.1.to_string().map(|v| (self.0, v))
+        self.1.into_string().map(|v| (self.0, v))
     }
 
     fn num(&self) -> Option<(&str, f64)> {
@@ -91,7 +91,7 @@ impl Value for ObjectItem {
     }
 
     fn to_object(self) -> Option<(String, Vec<ObjectItem>)> {
-        self.1.to_object().map(|v| (self.0, v))
+        self.1.into_object().map(|v| (self.0, v))
     }
 }
 

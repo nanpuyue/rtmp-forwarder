@@ -314,12 +314,13 @@ impl Forwarder {
             &self.snapshot.metadata,
             &self.snapshot.video_seq_hdr,
             &self.snapshot.audio_seq_hdr,
-        ] {
-            if let Some(m) = m {
-                let m = &mut m.clone();
-                m.set_stream_id(self.stream_id);
-                write_rtmp_message(w, m, self.chunk_size).await?;
-            }
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let m = &mut m.clone();
+            m.set_stream_id(self.stream_id);
+            write_rtmp_message(w, m, self.chunk_size).await?;
         }
         Ok(())
     }

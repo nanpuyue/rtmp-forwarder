@@ -89,11 +89,11 @@ pub async fn handle_client(
                                 .command_object
                                 .into_iter()
                                 .find(|(k, _)| k == "app")
-                                .and_then(|(_, v)| v.to_string());
+                                .and_then(|(_, v)| v.into_string());
                         }
                         "publish" | "releaseStream" | "FCPublish" => {
                             command_stream =
-                                cmd.args.into_iter().next().and_then(|v| v.to_string());
+                                cmd.args.into_iter().next().and_then(|v| v.into_string());
                         }
                         _ => {}
                     }

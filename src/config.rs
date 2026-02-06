@@ -15,18 +15,18 @@ pub struct ForwarderConfig {
 impl ForwarderConfig {
     pub fn rtmp_url(&self) -> String {
         let mut url = format!("rtmp://{}", self.addr);
-        if let Some(app) = &self.app {
-            if !app.is_empty() {
-                url.push('/');
-                url.push_str(app);
-                if let Some(stream) = &self.stream {
-                    if !stream.is_empty() {
-                        if !app.ends_with('/') {
-                            url.push('/');
-                        }
-                        url.push_str(stream);
-                    }
+        if let Some(app) = &self.app
+            && !app.is_empty()
+        {
+            url.push('/');
+            url.push_str(app);
+            if let Some(stream) = &self.stream
+                && !stream.is_empty()
+            {
+                if !app.ends_with('/') {
+                    url.push('/');
                 }
+                url.push_str(stream);
             }
         }
         url
