@@ -89,20 +89,20 @@ async fn main() -> Result<()> {
     // Parse CLI using clap
     let cli = Cli::parse();
     let config_path = cli.config.as_deref().unwrap_or("config.json");
-    let mut app_config = AppConfig::load(config_path)?;
 
-    // 2. Overlays CLI arguments if provided
+    // Build config from CLI args and defaults
+    let mut cli_config = AppConfig::default();
     if let Some(l) = cli.listen {
-        app_config.listen_addr = l;
+        cli_config.listen_addr = l;
     }
     if let Some(log) = cli.log {
-        app_config.log_level = log;
+        cli_config.log_level = log;
     }
     if let Some(w) = cli.web {
-        app_config.web_addr = w;
+        cli_config.web_addr = w;
     }
     if !cli.dest.is_empty() {
-        app_config.forwarders = cli
+        cli_config.forwarders = cli
             .dest
             .iter()
             .filter_map(|u| {
@@ -122,9 +122,12 @@ async fn main() -> Result<()> {
         } else {
             format!("{}:1935", r)
         };
-        app_config.relay_addr = addr;
-        app_config.relay_enabled = true;
+        cli_config.relay_addr = addr;
+        cli_config.relay_enabled = true;
     }
+
+    // Load or create config file
+    let app_config = AppConfig::load_or_create(config_path, cli_config)?;
 
     // Initialize tracing subscriber
     let env_filter = tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
