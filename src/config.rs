@@ -4,7 +4,34 @@ use std::sync::{Arc, RwLock};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::server::ForwarderConfig;
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ForwarderConfig {
+    pub addr: String,
+    pub app: Option<String>,
+    pub stream: Option<String>,
+    pub enabled: bool,
+}
+
+impl ForwarderConfig {
+    pub fn rtmp_url(&self) -> String {
+        let mut url = format!("rtmp://{}", self.addr);
+        if let Some(app) = &self.app {
+            if !app.is_empty() {
+                url.push('/');
+                url.push_str(app);
+                if let Some(stream) = &self.stream {
+                    if !stream.is_empty() {
+                        if !app.ends_with('/') {
+                            url.push('/');
+                        }
+                        url.push_str(stream);
+                    }
+                }
+            }
+        }
+        url
+    }
+}
 
 pub type SharedConfig = Arc<RwLock<AppConfig>>;
 

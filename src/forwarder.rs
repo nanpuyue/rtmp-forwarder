@@ -11,10 +11,10 @@ use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
 use crate::amf::RtmpCommand;
+use crate::config::ForwarderConfig;
 use crate::handshake::handshake_with_server;
 use crate::rtmp::{write_rtmp_message, write_rtmp_message2};
 use crate::rtmp_codec::{RtmpMessage, RtmpMessageStream};
-use crate::server::ForwarderConfig;
 
 /// ProtocolSnapshot caches the critical state headers and dynamic names
 /// received from the client to sync with new or reconnected destinations.
@@ -239,12 +239,14 @@ impl Forwarder {
 
         // 1. connect
         info!(
-            "#{} [{}] connect to app=\"{}\"",
-            self.index, self.config.addr, app,
+            "#{} [{}] connect to {}",
+            self.index,
+            self.config.addr,
+            self.config.rtmp_url(),
         );
         RtmpCommand::new("connect", 1.0)
             .object("app", app.as_str())
-            .object("tcUrl", format!("rtmp://{}/{}", self.config.addr, app))
+            .object("tcUrl", self.config.rtmp_url()) // 带上stream_key提升兼容性
             .object("fmsVer", "FMS/3,0,1,123")
             .object("capabilities", 31.0)
             .send(w, 3, 0, 128)

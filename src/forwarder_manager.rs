@@ -3,9 +3,9 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 use tracing::{info, warn};
 
+use crate::config::ForwarderConfig;
 use crate::forwarder::{ForwardEvent, Forwarder};
 use crate::rtmp_codec::RtmpMessage;
-use crate::server::ForwarderConfig;
 use crate::stream_manager::{StreamEvent, StreamManager, StreamMessage, StreamSnapshot};
 
 pub enum ForwarderCommand {
@@ -122,13 +122,7 @@ impl ForwarderManager {
         };
 
         tokio::spawn(forwarder.run());
-        info!(
-            "Started forwarder #{}: {}/{}{}",
-            index,
-            config.addr,
-            config.app.as_deref().unwrap_or_default(),
-            config.stream.as_deref().unwrap_or_default()
-        );
+        info!("Started forwarder #{}: {}", index, config.rtmp_url());
         tx
     }
 

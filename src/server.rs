@@ -4,7 +4,6 @@ use std::time::Instant;
 
 use anyhow::Result;
 use bytes::Bytes;
-use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
@@ -17,14 +16,6 @@ use crate::stream_manager::{StreamError, StreamInfo, StreamManager, StreamState}
 
 static CLIENT_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 const DEFAULT_STREAM_ID: u32 = 1;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ForwarderConfig {
-    pub addr: String,
-    pub app: Option<String>,
-    pub stream: Option<String>,
-    pub enabled: bool,
-}
 
 pub async fn handle_client(
     mut client: TcpStream,

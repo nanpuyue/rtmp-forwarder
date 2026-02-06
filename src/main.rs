@@ -8,7 +8,7 @@ use clap::Parser;
 use tokio::net::TcpListener;
 use tracing::{error, info};
 
-use crate::config::{AppConfig, GetForwarders};
+use crate::config::{AppConfig, ForwarderConfig, GetForwarders};
 use crate::flv_manager::FlvManager;
 use crate::forwarder_manager::ForwarderManager;
 use crate::stream_manager::StreamManager;
@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
             .iter()
             .filter_map(|u| {
                 let (addr, app, stream) = parse_rtmp_url(u).ok()?;
-                Some(server::ForwarderConfig {
+                Some(ForwarderConfig {
                     addr,
                     app: Some(app),
                     stream: Some(stream),
