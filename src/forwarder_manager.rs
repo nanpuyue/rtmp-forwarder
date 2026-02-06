@@ -122,7 +122,7 @@ impl ForwarderManager {
         };
 
         tokio::spawn(forwarder.run());
-        info!("Started forwarder #{}: {}", index, config.rtmp_url());
+        info!("Started forwarder #{}: {}", index, config.addr);
         tx
     }
 
