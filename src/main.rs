@@ -15,6 +15,7 @@ use crate::forwarder_manager::{ForwarderManager, ForwarderManagerCommand};
 use crate::stream_manager::StreamManager;
 
 mod amf;
+mod basic_auth;
 mod config;
 mod flv_manager;
 mod forwarder;
@@ -100,7 +101,7 @@ async fn main() -> Result<()> {
         cli_config.log_level = log;
     }
     if let Some(w) = cli.web {
-        cli_config.web_addr = w;
+        cli_config.web.addr = w;
     }
     if !cli.dest.is_empty() {
         cli_config.forwarders = cli

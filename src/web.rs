@@ -13,9 +13,11 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
+use tower_http::auth::AsyncRequireAuthorizationLayer;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
+use crate::basic_auth::BasicAuth;
 use crate::config::{GetForwarders, SharedConfig, WebConfig};
 use crate::flv_manager::FlvManager;
 use crate::forwarder_manager::ForwarderManagerCommand;
@@ -31,10 +33,13 @@ pub async fn start_web_server(
     forwarder_cmd_tx: mpsc::Sender<ForwarderManagerCommand>,
     stream_manager: Arc<StreamManager>,
 ) {
-    let addr_str = config.read().unwrap().web_addr.clone();
-    let addr: SocketAddr = addr_str.parse().unwrap_or(([0, 0, 0, 0], 8080).into());
+    let web_config = config.read().unwrap().web.clone();
+    let addr: SocketAddr = web_config
+        .addr
+        .parse()
+        .unwrap_or(([0, 0, 0, 0], 8080).into());
 
-    let app = Router::new()
+    let mut app = Router::new()
         .route("/api/config", get(get_config))
         .route("/api/config", post(update_config))
         .route("/live/stream.flv", get(handle_flv_stream))
@@ -45,6 +50,11 @@ pub async fn start_web_server(
         .layer(Extension(forwarder_cmd_tx))
         .layer(Extension(stream_manager))
         .layer(CorsLayer::permissive());
+    if web_config.username.is_some() || web_config.password.is_some() {
+        info!("Web dashboard requires authentication");
+        let basic_auth = BasicAuth::new(web_config.username, web_config.password);
+        app = app.layer(AsyncRequireAuthorizationLayer::new(basic_auth));
+    }
 
     info!("Web dashboard available at http://{}", addr);
     let listener = TcpListener::bind(addr).await.unwrap();

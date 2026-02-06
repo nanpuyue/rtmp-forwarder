@@ -52,6 +52,23 @@ impl ForwarderConfig {
 
 pub type SharedConfig = Arc<RwLock<AppConfig>>;
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct WebServerConfig {
+    pub addr: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
+impl Default for WebServerConfig {
+    fn default() -> Self {
+        Self {
+            addr: "0.0.0.0:8080".to_string(),
+            username: None,
+            password: None,
+        }
+    }
+}
+
 /// Web配置子集，仅包含允许通过Web界面配置的字段
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WebConfig {
@@ -66,7 +83,7 @@ pub struct AppConfig {
     pub forwarders: Vec<ForwarderConfig>,
     pub relay_addr: String,
     pub relay_enabled: bool,
-    pub web_addr: String,
+    pub web: WebServerConfig,
     pub log_level: String,
     #[serde(skip)]
     pub config_path: String,
@@ -83,7 +100,7 @@ impl Default for AppConfig {
             forwarders: Vec::new(),
             relay_addr: String::new(),
             relay_enabled: false,
-            web_addr: "0.0.0.0:8080".to_string(),
+            web: WebServerConfig::default(),
             log_level: "info".to_string(),
             config_path: "config.json".to_string(),
         }
