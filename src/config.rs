@@ -143,16 +143,7 @@ impl AppConfig {
         Ok(config)
     }
 
-    pub fn load_or_create(path: &str, cli_config: AppConfig) -> Result<AppConfig> {
-        if fs::metadata(path).is_ok() {
-            Self::load(path)
-        } else {
-            let mut config = cli_config;
-            config.config_path = path.to_string();
-            config.save()?;
-            Ok(config)
-        }
-    }
+
 }
 
 impl GetForwarders for WebConfig {

@@ -88,23 +88,26 @@ fn parse_rtmp_url(url: &str) -> Result<(String, String, String)> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Parse CLI using clap
     let cli = Cli::parse();
     let config_path = cli.config.as_deref().unwrap_or("config.json");
 
-    // Build config from CLI args and defaults
-    let mut cli_config = AppConfig::default();
+    let mut app_config = AppConfig::load(config_path).unwrap_or_else(|_| {
+        let mut config = AppConfig::default();
+        config.config_path = config_path.to_string();
+        config
+    });
+
     if let Some(l) = cli.listen {
-        cli_config.server.listen_addr = l;
+        app_config.server.listen_addr = l;
     }
     if let Some(log) = cli.log {
-        cli_config.log_level = log;
+        app_config.log_level = log;
     }
     if let Some(w) = cli.web {
-        cli_config.web.addr = w;
+        app_config.web.addr = w;
     }
     if !cli.dest.is_empty() {
-        cli_config.forwarders = cli
+        app_config.forwarders = cli
             .dest
             .iter()
             .filter_map(|u| {
@@ -124,12 +127,11 @@ async fn main() -> Result<()> {
         } else {
             format!("{}:1935", r)
         };
-        cli_config.relay_addr = addr;
-        cli_config.relay_enabled = true;
+        app_config.relay_addr = addr;
+        app_config.relay_enabled = true;
     }
 
-    // Load or create config file
-    let app_config = AppConfig::load_or_create(config_path, cli_config)?;
+    app_config.save()?;
 
     // Initialize tracing subscriber
     let env_filter = tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
