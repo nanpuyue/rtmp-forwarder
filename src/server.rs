@@ -106,15 +106,14 @@ pub async fn handle_client(
                                 && command_app.as_deref() != Some(expected_app.as_str())
                             {
                                 warn!("Connection rejected: app mismatch");
-                                RtmpCommand::new("_error", tx_num)
-                                    .arg(vec![
-                                        ("level", "error"),
-                                        ("code", "NetConnection.Connect.Rejected"),
-                                        ("description", "Invalid app"),
-                                    ])
-                                    .send(&mut client_tx, 3, 0, s2c_chunk)
-                                    .await
-                                    .ok();
+                                RtmpCommand::error(
+                                    tx_num,
+                                    "NetConnection.Connect.Rejected",
+                                    "Invalid app",
+                                )
+                                .send(&mut client_tx, 3, 0, s2c_chunk)
+                                .await
+                                .ok();
                                 break;
                             }
 
@@ -123,15 +122,14 @@ pub async fn handle_client(
                                 stream_manager.handle_connect(&stream.app_name).await
                             {
                                 warn!("Connection rejected: already publishing");
-                                RtmpCommand::new("_error", tx_num)
-                                    .arg(vec![
-                                        ("level", "error"),
-                                        ("code", "NetConnection.Connect.Rejected"),
-                                        ("description", "Already publishing"),
-                                    ])
-                                    .send(&mut client_tx, 3, 0, s2c_chunk)
-                                    .await
-                                    .ok();
+                                RtmpCommand::error(
+                                    tx_num,
+                                    "NetConnection.Connect.Rejected",
+                                    "Already publishing",
+                                )
+                                .send(&mut client_tx, 3, 0, s2c_chunk)
+                                .await
+                                .ok();
                                 break;
                             }
                             info!(
@@ -178,14 +176,7 @@ pub async fn handle_client(
                             s2c_chunk = 4096;
 
                             // _result(connect)
-                            RtmpCommand::new("_result", tx_num)
-                                .object("fmsVer", "FMS/3,0,1,123")
-                                .object("capabilities", 31.0)
-                                .arg(vec![
-                                    ("level", "status"),
-                                    ("code", "NetConnection.Connect.Success"),
-                                    ("description", "Connection succeeded."),
-                                ])
+                            RtmpCommand::result_connect(tx_num)
                                 .send(&mut client_tx, 3, 0, s2c_chunk)
                                 .await
                                 .ok();
@@ -194,8 +185,7 @@ pub async fn handle_client(
                             match stream_manager.handle_create_stream().await {
                                 Ok(_) => {
                                     stream.state = StreamState::Idle;
-                                    RtmpCommand::new("_result", tx_num)
-                                        .arg(stream.stream_id as f64)
+                                    RtmpCommand::result_create_stream(tx_num, stream.stream_id)
                                         .send(&mut client_tx, 3, 0, s2c_chunk)
                                         .await
                                         .ok();
@@ -203,15 +193,14 @@ pub async fn handle_client(
                                 }
                                 Err(StreamError::AlreadyPublishing) => {
                                     warn!("createStream rejected: already publishing");
-                                    RtmpCommand::new("_error", tx_num)
-                                        .arg(vec![
-                                            ("level", "error"),
-                                            ("code", "NetStream.Create.Failed"),
-                                            ("description", "Already publishing"),
-                                        ])
-                                        .send(&mut client_tx, 3, 0, s2c_chunk)
-                                        .await
-                                        .ok();
+                                    RtmpCommand::error(
+                                        tx_num,
+                                        "NetStream.Create.Failed",
+                                        "Already publishing",
+                                    )
+                                    .send(&mut client_tx, 3, 0, s2c_chunk)
+                                    .await
+                                    .ok();
                                 }
                                 _ => {}
                             }
@@ -224,15 +213,14 @@ pub async fn handle_client(
                                 && command_stream.as_deref() != Some(expected_key.as_str())
                             {
                                 warn!("Publish rejected: stream_key mismatch");
-                                RtmpCommand::new("onStatus", 0.0)
-                                    .arg(vec![
-                                        ("level", "error"),
-                                        ("code", "NetStream.Publish.BadName"),
-                                        ("description", "Invalid stream key"),
-                                    ])
-                                    .send(&mut client_tx, 3, stream_id, s2c_chunk)
-                                    .await
-                                    .ok();
+                                RtmpCommand::on_status(
+                                    "NetStream.Publish.BadName",
+                                    "error",
+                                    "Invalid stream key",
+                                )
+                                .send(&mut client_tx, 3, stream_id, s2c_chunk)
+                                .await
+                                .ok();
                                 break;
                             }
 
@@ -240,15 +228,14 @@ pub async fn handle_client(
                             stream.stream_key = command_stream;
                             match stream_manager.handle_publish(stream_id, stream).await {
                                 Ok(_) => {
-                                    RtmpCommand::new("onStatus", 0.0)
-                                        .arg(vec![
-                                            ("level", "status"),
-                                            ("code", "NetStream.Publish.Start"),
-                                            ("description", "Publishing started."),
-                                        ])
-                                        .send(&mut client_tx, 3, stream_id, s2c_chunk)
-                                        .await
-                                        .ok();
+                                    RtmpCommand::on_status(
+                                        "NetStream.Publish.Start",
+                                        "status",
+                                        "Publishing started.",
+                                    )
+                                    .send(&mut client_tx, 3, stream_id, s2c_chunk)
+                                    .await
+                                    .ok();
                                     info!("Client {client_id} publish to stream \"{stream_key}\"");
                                 }
                                 Err(e) => {
@@ -258,15 +245,14 @@ pub async fn handle_client(
                                         _ => "Publish failed",
                                     };
                                     warn!("publish rejected: {}", msg);
-                                    RtmpCommand::new("onStatus", 0.0)
-                                        .arg(vec![
-                                            ("level", "error"),
-                                            ("code", "NetStream.Publish.BadName"),
-                                            ("description", msg),
-                                        ])
-                                        .send(&mut client_tx, 3, stream_id, s2c_chunk)
-                                        .await
-                                        .ok();
+                                    RtmpCommand::on_status(
+                                        "NetStream.Publish.BadName",
+                                        "error",
+                                        msg,
+                                    )
+                                    .send(&mut client_tx, 3, stream_id, s2c_chunk)
+                                    .await
+                                    .ok();
                                 }
                             }
                         }
@@ -275,45 +261,42 @@ pub async fn handle_client(
                                 .handle_unpublish(stream_id, client_id)
                                 .await
                                 .ok();
-                            RtmpCommand::new("onStatus", 0.0)
-                                .arg(vec![
-                                    ("level", "status"),
-                                    ("code", "NetStream.Unpublish.Success"),
-                                    ("description", "Unpublished."),
-                                ])
-                                .send(&mut client_tx, 3, stream_id, s2c_chunk)
-                                .await
-                                .ok();
+                            RtmpCommand::on_status(
+                                "NetStream.Unpublish.Success",
+                                "status",
+                                "Unpublished.",
+                            )
+                            .send(&mut client_tx, 3, stream_id, s2c_chunk)
+                            .await
+                            .ok();
                         }
                         "closeStream" => {
                             stream_manager
                                 .handle_close_stream(stream_id, client_id)
                                 .await
                                 .ok();
-                            RtmpCommand::new("onStatus", 0.0)
-                                .arg(vec![
-                                    ("level", "status"),
-                                    ("code", "NetStream.Unpublish.Success"),
-                                    ("description", "Stream closed."),
-                                ])
-                                .send(&mut client_tx, 3, stream_id, s2c_chunk)
-                                .await
-                                .ok();
+                            RtmpCommand::on_status(
+                                "NetStream.Unpublish.Success",
+                                "status",
+                                "Stream closed.",
+                            )
+                            .send(&mut client_tx, 3, stream_id, s2c_chunk)
+                            .await
+                            .ok();
                         }
                         "deleteStream" => {
                             stream_manager
                                 .handle_delete_stream(stream_id, client_id)
                                 .await
                                 .ok();
-                            RtmpCommand::new("onStatus", 0.0)
-                                .arg(vec![
-                                    ("level", "status"),
-                                    ("code", "NetStream.DeleteStream.Success"),
-                                    ("description", "Stream deleted."),
-                                ])
-                                .send(&mut client_tx, 3, stream_id, s2c_chunk)
-                                .await
-                                .ok();
+                            RtmpCommand::on_status(
+                                "NetStream.DeleteStream.Success",
+                                "status",
+                                "Stream deleted.",
+                            )
+                            .send(&mut client_tx, 3, stream_id, s2c_chunk)
+                            .await
+                            .ok();
                             break;
                         }
                         _ => {}

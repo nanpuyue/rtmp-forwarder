@@ -244,11 +244,7 @@ impl Forwarder {
             self.config.addr,
             self.config.rtmp_url(),
         );
-        RtmpCommand::new("connect", 1.0)
-            .object("app", app.as_str())
-            .object("tcUrl", self.config.rtmp_url()) // 带上stream_key提升兼容性
-            .object("fmsVer", "FMS/3,0,1,123")
-            .object("capabilities", 31.0)
+        RtmpCommand::connect(1.0, app.as_str(), self.config.rtmp_url())
             .send(w, 3, 0, 128)
             .await?;
 
@@ -277,14 +273,23 @@ impl Forwarder {
 
         // 2-3. releaseStream and FCPublish are required by many standard servers (like Nginx-RTMP)
         for (cmd, tx) in [("releaseStream", 2.0), ("FCPublish", 3.0)] {
-            RtmpCommand::new(cmd, tx)
-                .arg(stream.as_str())
-                .send(w, 3, 0, self.chunk_size)
-                .await?;
+            match cmd {
+                "releaseStream" => {
+                    RtmpCommand::release_stream(tx, stream)
+                        .send(w, 3, 0, self.chunk_size)
+                        .await?;
+                }
+                "FCPublish" => {
+                    RtmpCommand::fc_publish(tx, stream)
+                        .send(w, 3, 0, self.chunk_size)
+                        .await?;
+                }
+                _ => {}
+            }
         }
 
         // 4. Create the logical stream
-        RtmpCommand::new("createStream", 4.0)
+        RtmpCommand::create_stream(4.0)
             .send(w, 3, 0, self.chunk_size)
             .await?;
 
@@ -300,9 +305,7 @@ impl Forwarder {
             "#{} [{}] publish to stream=\"{}\"",
             self.index, self.config.addr, stream
         );
-        RtmpCommand::new("publish", 5.0)
-            .arg(stream.as_str())
-            .arg("live")
+        RtmpCommand::publish(5.0, stream)
             .send(w, 3, self.stream_id, self.chunk_size)
             .await?;
 
@@ -418,14 +421,12 @@ impl Forwarder {
         ) {
             info!("#{} [{}] shutdown", self.index, self.config.addr);
 
-            RtmpCommand::new("FCUnpublish", 6.0)
-                .arg(stream)
+            RtmpCommand::fc_unpublish(6.0, stream)
                 .send(w, 3, self.stream_id, self.chunk_size)
                 .await
                 .ok();
 
-            RtmpCommand::new("deleteStream", 7.0)
-                .arg(1.0)
+            RtmpCommand::delete_stream(7.0, self.stream_id as f64)
                 .send(w, 3, self.stream_id, self.chunk_size)
                 .await
                 .ok();

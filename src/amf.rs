@@ -277,6 +277,85 @@ impl RtmpCommand {
         }
     }
 
+    // 连接命令 - 固定参数：fmsVer, capabilities
+    pub fn connect(tx_id: f64, app: impl Into<String>, tc_url: impl Into<String>) -> Self {
+        Self::new("connect", tx_id)
+            .object("app", app.into())
+            .object("tcUrl", tc_url.into())
+            .object("fmsVer", "FMS/3,0,1,123")
+            .object("capabilities", 31.0)
+    }
+
+    // 创建流命令
+    pub fn create_stream(tx_id: f64) -> Self {
+        Self::new("createStream", tx_id)
+    }
+
+    // 发布流命令 - 固定参数："live"
+    pub fn publish(tx_id: f64, stream_name: impl Into<String>) -> Self {
+        Self::new("publish", tx_id)
+            .arg(stream_name.into())
+            .arg("live")
+    }
+
+    // 释放流命令
+    pub fn release_stream(tx_id: f64, stream_name: impl Into<String>) -> Self {
+        Self::new("releaseStream", tx_id).arg(stream_name.into())
+    }
+
+    // FCPublish命令
+    pub fn fc_publish(tx_id: f64, stream_name: impl Into<String>) -> Self {
+        Self::new("FCPublish", tx_id).arg(stream_name.into())
+    }
+
+    // FCUnpublish命令
+    pub fn fc_unpublish(tx_id: f64, stream_name: impl Into<String>) -> Self {
+        Self::new("FCUnpublish", tx_id).arg(stream_name.into())
+    }
+
+    // 删除流命令
+    pub fn delete_stream(tx_id: f64, stream_id: f64) -> Self {
+        Self::new("deleteStream", tx_id).arg(stream_id)
+    }
+
+    // 成功响应命令 - 固定参数：level, code, description
+    pub fn result_connect(tx_id: f64) -> Self {
+        Self::new("_result", tx_id)
+            .object("fmsVer", "FMS/3,0,1,123")
+            .object("capabilities", 31.0)
+            .arg(vec![
+                ("level", "status"),
+                ("code", "NetConnection.Connect.Success"),
+                ("description", "Connection succeeded."),
+            ])
+    }
+
+    pub fn result_create_stream(tx_id: f64, stream_id: u32) -> Self {
+        Self::new("_result", tx_id).arg(stream_id as f64)
+    }
+
+    // 错误响应命令 - 固定参数：level, code, description
+    pub fn error(tx_id: f64, code: impl Into<String>, description: impl Into<String>) -> Self {
+        Self::new("_error", tx_id).arg(vec![
+            ("level", "error".into()),
+            ("code", code.into()),
+            ("description", description.into()),
+        ])
+    }
+
+    // 状态通知命令 - 固定参数：level, code, description
+    pub fn on_status(
+        code: impl Into<String>,
+        level: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        Self::new("onStatus", 0.0).arg(vec![
+            ("level", level.into()),
+            ("code", code.into()),
+            ("description", description.into()),
+        ])
+    }
+
     pub fn object<T: Into<Amf0>>(mut self, key: impl Into<String>, value: T) -> Self {
         self.command_object.push((key.into(), value.into()));
         self
@@ -347,6 +426,12 @@ impl From<f64> for Amf0 {
 impl From<bool> for Amf0 {
     fn from(b: bool) -> Self {
         Amf0::Boolean(b)
+    }
+}
+
+impl From<u32> for Amf0 {
+    fn from(n: u32) -> Self {
+        Amf0::Number(n as f64)
     }
 }
 
