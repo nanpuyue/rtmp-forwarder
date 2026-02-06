@@ -10,7 +10,7 @@ use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
-use crate::amf::{AmfReader, RtmpCommand, rtmp_command};
+use crate::amf::RtmpCommand;
 use crate::handshake::handshake_with_server;
 use crate::rtmp::{write_rtmp_message, write_rtmp_message2};
 use crate::rtmp_codec::{RtmpMessage, RtmpMessageStream};
@@ -329,18 +329,10 @@ impl Forwarder {
         expect_tx_id: f64,
     ) -> Result<()> {
         while let Some(response) = timeout(Duration::from_secs(5), response_rx.recv()).await? {
-            if response.header().msg_type != 20 {
-                continue;
-            }
+            if let Ok(cmd) = RtmpMessage::command(&response) {
+                let tx_id = cmd.transaction_id;
 
-            let payload = response.payload();
-            if let Ok(cmd) = rtmp_command(&payload) {
-                let mut reader: AmfReader<'_> = AmfReader::new(&payload);
-                let _ = reader.read_string(); // name
-                let tx_id = reader.read_number()?; // tx_id
-                let _ = reader.read_null();
-
-                match cmd.as_str() {
+                match cmd.name.as_str() {
                     "_result" => {
                         // 处理 _result 响应
                         match tx_id {
@@ -361,7 +353,7 @@ impl Forwarder {
                             }
                             4.0 => {
                                 // createStream 响应，获取 stream_id
-                                if let Ok(stream_id) = reader.read_number() {
+                                if let Some(stream_id) = cmd.args.first().and_then(|v| v.num()) {
                                     self.stream_id = stream_id as u32;
                                     info!(
                                         "#{} [{}] createStream success, stream_id: {}",
@@ -396,7 +388,7 @@ impl Forwarder {
                     _ => {
                         debug!(
                             "#{} [{}] unknown response: {}",
-                            self.index, self.config.addr, cmd
+                            self.index, self.config.addr, cmd.name
                         );
                     }
                 }

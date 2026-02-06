@@ -5,14 +5,7 @@ use tracing::trace;
 
 use crate::rtmp_codec::{RtmpMessage, RtmpMessageIter};
 
-/* ================= AMF0 ================= */
-
-// Peek AMF0 command name without mutating the original slice
-pub fn rtmp_command(payload: &[u8]) -> Result<String> {
-    AmfReader::new(payload).read_string()
-}
-
-/* ================= AMF0 helpers ================= */
+pub type ObjectItem = (String, Amf0);
 
 #[derive(Clone, Debug)]
 pub enum Amf0 {
@@ -20,6 +13,86 @@ pub enum Amf0 {
     Number(f64),
     Boolean(bool),
     Object(Vec<(String, Amf0)>),
+}
+
+impl Amf0 {
+    pub fn string(&self) -> Option<&str> {
+        match self {
+            Amf0::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn to_string(self) -> Option<String> {
+        match self {
+            Amf0::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn num(&self) -> Option<f64> {
+        match self {
+            Amf0::Number(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    pub fn boolean(&self) -> Option<bool> {
+        match self {
+            Amf0::Boolean(b) => Some(*b),
+            _ => None,
+        }
+    }
+
+    pub fn object(&self) -> Option<&Vec<(String, Amf0)>> {
+        match self {
+            Amf0::Object(obj) => Some(obj),
+            _ => None,
+        }
+    }
+
+    pub fn to_object(self) -> Option<Vec<(String, Amf0)>> {
+        match self {
+            Amf0::Object(obj) => Some(obj),
+            _ => None,
+        }
+    }
+}
+
+#[allow(unused)]
+pub trait Value {
+    fn string(&self) -> Option<(&str, &str)>;
+    fn to_string(self) -> Option<(String, String)>;
+    fn num(&self) -> Option<(&str, f64)>;
+    fn boolean(&self) -> Option<(&str, bool)>;
+    fn object(&self) -> Option<(&str, &Vec<ObjectItem>)>;
+    fn to_object(self) -> Option<(String, Vec<ObjectItem>)>;
+}
+
+impl Value for ObjectItem {
+    fn string(&self) -> Option<(&str, &str)> {
+        self.1.string().map(|v| (self.0.as_str(), v))
+    }
+
+    fn to_string(self) -> Option<(String, String)> {
+        self.1.to_string().map(|v| (self.0, v))
+    }
+
+    fn num(&self) -> Option<(&str, f64)> {
+        self.1.num().map(|v| (self.0.as_str(), v))
+    }
+
+    fn boolean(&self) -> Option<(&str, bool)> {
+        self.1.boolean().map(|v| (self.0.as_str(), v))
+    }
+
+    fn object(&self) -> Option<(&str, &Vec<ObjectItem>)> {
+        self.1.object().map(|v| (self.0.as_str(), v))
+    }
+
+    fn to_object(self) -> Option<(String, Vec<ObjectItem>)> {
+        self.1.to_object().map(|v| (self.0, v))
+    }
 }
 
 fn write_value(b: &mut BytesMut, v: &Amf0) {
@@ -69,7 +142,7 @@ impl<'a> AmfReader<'a> {
         Self { data }
     }
 
-    pub fn read_string(&mut self) -> Result<String> {
+    fn read_string(&mut self) -> Result<String> {
         if self.peek() != Some(0x02) {
             return Err(anyhow!("not string"));
         }
@@ -80,7 +153,7 @@ impl<'a> AmfReader<'a> {
         Ok(s)
     }
 
-    pub fn read_number(&mut self) -> Result<f64> {
+    fn read_number(&mut self) -> Result<f64> {
         if self.peek() != Some(0x00) {
             return Err(anyhow!("not number"));
         }
@@ -90,7 +163,7 @@ impl<'a> AmfReader<'a> {
         Ok(v)
     }
 
-    pub fn read_boolean(&mut self) -> Result<bool> {
+    fn read_boolean(&mut self) -> Result<bool> {
         if self.peek() != Some(0x01) {
             return Err(anyhow!("not boolean"));
         }
@@ -100,7 +173,7 @@ impl<'a> AmfReader<'a> {
         Ok(v)
     }
 
-    pub fn read_null(&mut self) -> Result<()> {
+    fn read_null(&mut self) -> Result<()> {
         if self.peek() != Some(0x05) {
             return Err(anyhow!("not null"));
         }
@@ -109,7 +182,7 @@ impl<'a> AmfReader<'a> {
         Ok(())
     }
 
-    pub fn read_object(&mut self) -> Result<Vec<(String, Amf0)>> {
+    fn read_object(&mut self) -> Result<Vec<(String, Amf0)>> {
         if self.peek() != Some(0x03) {
             return Err(anyhow!("not object"));
         }

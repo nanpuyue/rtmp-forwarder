@@ -9,10 +9,10 @@ use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
-use crate::amf::{Amf0, AmfReader, RtmpCommand, rtmp_command};
+use crate::amf::RtmpCommand;
 use crate::handshake::handshake_with_client;
 use crate::rtmp::write_rtmp_message2;
-use crate::rtmp_codec::RtmpMessageStream;
+use crate::rtmp_codec::{RtmpMessage, RtmpMessageStream};
 use crate::stream_manager::{StreamError, StreamInfo, StreamManager, StreamState};
 
 static CLIENT_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
@@ -68,32 +68,6 @@ pub async fn handle_client(
                 break;
             }
         };
-        // 提取app和stream信息
-        let mut command_app = None;
-        let mut command_stream = None;
-        if msg.header().msg_type == 20 {
-            let payload = msg.payload();
-            if let Ok(cmd) = rtmp_command(&payload) {
-                let mut r = AmfReader::new(&payload);
-                let _ = r.read_string();
-                match cmd.as_str() {
-                    "connect" => {
-                        if let Ok(obj) = r.read_number().and_then(|_| r.read_object())
-                            && let Some((_, Amf0::String(s))) = obj.iter().find(|(k, _)| k == "app")
-                        {
-                            command_app = Some(s.clone());
-                        }
-                    }
-                    "publish" | "releaseStream" | "FCPublish" => {
-                        let _ = r.read_number().and_then(|_| r.read_null());
-                        if let Ok(s) = r.read_string() {
-                            command_stream = Some(s);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
 
         match msg.header().msg_type {
             1 => {
@@ -112,13 +86,28 @@ pub async fn handle_client(
             }
             20 => {
                 let stream_id = msg.header().stream_id;
-                let payload = msg.payload();
-                if let Ok(cmd) = rtmp_command(&payload) {
-                    let mut reader = AmfReader::new(&payload);
-                    let _ = reader.read_string(); // name
-                    let tx_num = reader.read_number().unwrap_or(0.0);
+                if let Ok(cmd) = RtmpMessage::command(&msg) {
+                    let tx_num = cmd.transaction_id;
 
-                    match cmd.as_str() {
+                    // 提取app和stream信息
+                    let mut command_app = None;
+                    let mut command_stream = None;
+                    match cmd.name.as_str() {
+                        "connect" => {
+                            command_app = cmd
+                                .command_object
+                                .into_iter()
+                                .find(|(k, _)| k == "app")
+                                .and_then(|(_, v)| v.to_string());
+                        }
+                        "publish" | "releaseStream" | "FCPublish" => {
+                            command_stream =
+                                cmd.args.into_iter().next().and_then(|v| v.to_string());
+                        }
+                        _ => {}
+                    }
+
+                    match cmd.name.as_str() {
                         "connect" if let Some(stream) = stream.as_mut() => {
                             stream.app_name = command_app;
                             if let Err(StreamError::AlreadyPublishing) =
