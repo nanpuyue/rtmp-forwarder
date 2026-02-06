@@ -6,11 +6,12 @@ use std::sync::{Arc, RwLock};
 use anyhow::Result;
 use clap::Parser;
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use tracing::{error, info};
 
 use crate::config::{AppConfig, ForwarderConfig, GetForwarders};
 use crate::flv_manager::FlvManager;
-use crate::forwarder_manager::ForwarderManager;
+use crate::forwarder_manager::{ForwarderManager, ForwarderManagerCommand};
 use crate::stream_manager::StreamManager;
 
 mod amf;
@@ -175,12 +176,13 @@ async fn main() -> Result<()> {
 
     // 8. Setup graceful shutdown
     let shutdown_forwarder_cmd = forwarder_cmd_tx.clone();
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
         info!("Received shutdown signal");
         shutdown_forwarder_cmd
-            .send(crate::forwarder_manager::ForwarderCommand::Shutdown)
+            .send(ForwarderManagerCommand::Shutdown)
+            .await
             .ok();
         shutdown_tx.send(()).await.ok();
     });

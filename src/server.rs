@@ -103,19 +103,20 @@ pub async fn handle_client(
                             // Validate app if configured
                             let server_cfg = shared_config.read().unwrap().server.clone();
                             if let Some(expected_app) = &server_cfg.app
-                                && command_app.as_deref() != Some(expected_app.as_str()) {
-                                    warn!("Connection rejected: app mismatch");
-                                    RtmpCommand::new("_error", tx_num)
-                                        .arg(vec![
-                                            ("level", "error"),
-                                            ("code", "NetConnection.Connect.Rejected"),
-                                            ("description", "Invalid app"),
-                                        ])
-                                        .send(&mut client_tx, 3, 0, s2c_chunk)
-                                        .await
-                                        .ok();
-                                    break;
-                                }
+                                && command_app.as_deref() != Some(expected_app.as_str())
+                            {
+                                warn!("Connection rejected: app mismatch");
+                                RtmpCommand::new("_error", tx_num)
+                                    .arg(vec![
+                                        ("level", "error"),
+                                        ("code", "NetConnection.Connect.Rejected"),
+                                        ("description", "Invalid app"),
+                                    ])
+                                    .send(&mut client_tx, 3, 0, s2c_chunk)
+                                    .await
+                                    .ok();
+                                break;
+                            }
 
                             stream.app_name = command_app;
                             if let Err(StreamError::AlreadyPublishing) =
@@ -220,19 +221,20 @@ pub async fn handle_client(
                             // Validate stream_key if configured
                             let server_cfg = shared_config.read().unwrap().server.clone();
                             if let Some(expected_key) = &server_cfg.stream_key
-                                && command_stream.as_deref() != Some(expected_key.as_str()) {
-                                    warn!("Publish rejected: stream_key mismatch");
-                                    RtmpCommand::new("onStatus", 0.0)
-                                        .arg(vec![
-                                            ("level", "error"),
-                                            ("code", "NetStream.Publish.BadName"),
-                                            ("description", "Invalid stream key"),
-                                        ])
-                                        .send(&mut client_tx, 3, stream_id, s2c_chunk)
-                                        .await
-                                        .ok();
-                                    break;
-                                }
+                                && command_stream.as_deref() != Some(expected_key.as_str())
+                            {
+                                warn!("Publish rejected: stream_key mismatch");
+                                RtmpCommand::new("onStatus", 0.0)
+                                    .arg(vec![
+                                        ("level", "error"),
+                                        ("code", "NetStream.Publish.BadName"),
+                                        ("description", "Invalid stream key"),
+                                    ])
+                                    .send(&mut client_tx, 3, stream_id, s2c_chunk)
+                                    .await
+                                    .ok();
+                                break;
+                            }
 
                             let stream_key = command_stream.clone().unwrap_or_default();
                             stream.stream_key = command_stream;

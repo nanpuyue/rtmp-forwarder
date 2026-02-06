@@ -10,7 +10,7 @@ use axum::{Extension, Json, Router};
 use rust_embed::RustEmbed;
 use serde_json::json;
 use tokio::net::TcpListener;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 use tower_http::cors::CorsLayer;
@@ -18,7 +18,7 @@ use tracing::info;
 
 use crate::config::{GetForwarders, SharedConfig, WebConfig};
 use crate::flv_manager::FlvManager;
-use crate::forwarder_manager::ForwarderCommand;
+use crate::forwarder_manager::ForwarderManagerCommand;
 use crate::stream_manager::{StreamEvent, StreamManager, StreamMessage};
 
 #[derive(RustEmbed)]
@@ -28,7 +28,7 @@ struct Assets;
 pub async fn start_web_server(
     config: SharedConfig,
     flv_manager: Arc<FlvManager>,
-    forwarder_cmd_tx: UnboundedSender<ForwarderCommand>,
+    forwarder_cmd_tx: mpsc::Sender<ForwarderManagerCommand>,
     stream_manager: Arc<StreamManager>,
 ) {
     let addr_str = config.read().unwrap().web_addr.clone();
@@ -94,7 +94,7 @@ async fn get_config(Extension(config): Extension<SharedConfig>) -> Json<WebConfi
 
 async fn update_config(
     Extension(config): Extension<SharedConfig>,
-    Extension(forwarder_cmd_tx): Extension<UnboundedSender<ForwarderCommand>>,
+    Extension(forwarder_cmd_tx): Extension<mpsc::Sender<ForwarderManagerCommand>>,
     Json(web_config): Json<WebConfig>,
 ) -> Json<bool> {
     let success = {
@@ -110,7 +110,8 @@ async fn update_config(
             forwarders.len()
         );
         forwarder_cmd_tx
-            .send(ForwarderCommand::UpdateConfig(forwarders))
+            .send(ForwarderManagerCommand::UpdateConfig(forwarders))
+            .await
             .ok();
     }
 

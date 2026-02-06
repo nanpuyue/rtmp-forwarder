@@ -8,7 +8,7 @@ use crate::forwarder::{ForwardEvent, Forwarder};
 use crate::rtmp_codec::RtmpMessage;
 use crate::stream_manager::{StreamEvent, StreamManager, StreamMessage, StreamSnapshot};
 
-pub enum ForwarderCommand {
+pub enum ForwarderManagerCommand {
     UpdateConfig(Vec<ForwarderConfig>),
     Shutdown,
 }
@@ -16,7 +16,7 @@ pub enum ForwarderCommand {
 pub struct ForwarderManager {
     stream_manager: Arc<StreamManager>,
     config: Arc<RwLock<Vec<ForwarderConfig>>>,
-    command_rx: mpsc::UnboundedReceiver<ForwarderCommand>,
+    command_rx: mpsc::Receiver<ForwarderManagerCommand>,
     running_configs: Arc<RwLock<Vec<ForwarderConfig>>>,
 }
 
@@ -24,8 +24,8 @@ impl ForwarderManager {
     pub fn new(
         stream_manager: Arc<StreamManager>,
         initial_config: Vec<ForwarderConfig>,
-    ) -> (Self, mpsc::UnboundedSender<ForwarderCommand>) {
-        let (tx, rx) = mpsc::unbounded_channel();
+    ) -> (Self, mpsc::Sender<ForwarderManagerCommand>) {
+        let (tx, rx) = mpsc::channel(32); // 使用有界通道，缓冲区大小为32
         (
             Self {
                 stream_manager,
@@ -74,7 +74,7 @@ impl ForwarderManager {
 
                 Some(cmd) = self.command_rx.recv() => {
                     match cmd {
-                        ForwarderCommand::UpdateConfig(new_config) => {
+                        ForwarderManagerCommand::UpdateConfig(new_config) => {
                             info!("Received config update with {} forwarders", new_config.len());
                             *self.config.write().await = new_config;
 
@@ -84,7 +84,7 @@ impl ForwarderManager {
                                 self.stop_all_forwarders(&mut forwarders).await;
                             }
                         }
-                        ForwarderCommand::Shutdown => {
+                        ForwarderManagerCommand::Shutdown => {
                             info!("ForwarderManager shutting down");
                             break;
                         }

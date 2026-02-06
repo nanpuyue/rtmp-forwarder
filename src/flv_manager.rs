@@ -63,8 +63,8 @@ impl FlvManager {
                         if data.len() >= 21 // 数据长度
                             && data[0] == 9 // tag 类型
                             && data[11] >> 4 == 0x01 // 帧类型
+                            // 帧类型不可靠，检查 NALU
                             && data[20] & 0x1f == 5
-                        // 帧类型不可靠，检查 NALU
                         {
                             break data;
                         }
