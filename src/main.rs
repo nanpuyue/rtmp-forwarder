@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
     // Build config from CLI args and defaults
     let mut cli_config = AppConfig::default();
     if let Some(l) = cli.listen {
-        cli_config.listen_addr = l;
+        cli_config.server.listen_addr = l;
     }
     if let Some(log) = cli.log {
         cli_config.log_level = log;
@@ -169,7 +169,7 @@ async fn main() -> Result<()> {
     });
 
     // 7. Bind the listening socket based on current config
-    let listen_addr = shared_config.read().unwrap().listen_addr.clone();
+    let listen_addr = shared_config.read().unwrap().server.listen_addr.clone();
     let listener = TcpListener::bind(&listen_addr).await?;
     info!("RTMP listening on: {}", listen_addr);
 

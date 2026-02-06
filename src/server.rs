@@ -19,7 +19,7 @@ const DEFAULT_STREAM_ID: u32 = 1;
 
 pub async fn handle_client(
     mut client: TcpStream,
-    _shared_config: crate::config::SharedConfig,
+    shared_config: crate::config::SharedConfig,
     stream_manager: Arc<StreamManager>,
 ) -> Result<()> {
     client.set_nodelay(true)?;
@@ -100,6 +100,23 @@ pub async fn handle_client(
 
                     match cmd.name.as_str() {
                         "connect" if let Some(stream) = stream.as_mut() => {
+                            // Validate app if configured
+                            let server_cfg = shared_config.read().unwrap().server.clone();
+                            if let Some(expected_app) = &server_cfg.app
+                                && command_app.as_deref() != Some(expected_app.as_str()) {
+                                    warn!("Connection rejected: app mismatch");
+                                    RtmpCommand::new("_error", tx_num)
+                                        .arg(vec![
+                                            ("level", "error"),
+                                            ("code", "NetConnection.Connect.Rejected"),
+                                            ("description", "Invalid app"),
+                                        ])
+                                        .send(&mut client_tx, 3, 0, s2c_chunk)
+                                        .await
+                                        .ok();
+                                    break;
+                                }
+
                             stream.app_name = command_app;
                             if let Err(StreamError::AlreadyPublishing) =
                                 stream_manager.handle_connect(&stream.app_name).await
@@ -200,6 +217,23 @@ pub async fn handle_client(
                         }
                         // take stream
                         "publish" if let Some(mut stream) = stream.take() => {
+                            // Validate stream_key if configured
+                            let server_cfg = shared_config.read().unwrap().server.clone();
+                            if let Some(expected_key) = &server_cfg.stream_key
+                                && command_stream.as_deref() != Some(expected_key.as_str()) {
+                                    warn!("Publish rejected: stream_key mismatch");
+                                    RtmpCommand::new("onStatus", 0.0)
+                                        .arg(vec![
+                                            ("level", "error"),
+                                            ("code", "NetStream.Publish.BadName"),
+                                            ("description", "Invalid stream key"),
+                                        ])
+                                        .send(&mut client_tx, 3, stream_id, s2c_chunk)
+                                        .await
+                                        .ok();
+                                    break;
+                                }
+
                             let stream_key = command_stream.clone().unwrap_or_default();
                             stream.stream_key = command_stream;
                             match stream_manager.handle_publish(stream_id, stream).await {

@@ -5,6 +5,23 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ServerConfig {
+    pub listen_addr: String,
+    pub app: Option<String>,
+    pub stream_key: Option<String>,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            listen_addr: "127.0.0.1:1935".to_string(),
+            app: None,
+            stream_key: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ForwarderConfig {
     pub addr: String,
     pub app: Option<String>,
@@ -45,7 +62,7 @@ pub struct WebConfig {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AppConfig {
-    pub listen_addr: String,
+    pub server: ServerConfig,
     pub forwarders: Vec<ForwarderConfig>,
     pub relay_addr: String,
     pub relay_enabled: bool,
@@ -62,7 +79,7 @@ pub trait GetForwarders {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            listen_addr: "127.0.0.1:1935".to_string(),
+            server: ServerConfig::default(),
             forwarders: Vec::new(),
             relay_addr: String::new(),
             relay_enabled: false,
