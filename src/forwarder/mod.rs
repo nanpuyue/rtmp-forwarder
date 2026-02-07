@@ -9,12 +9,15 @@ use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 
-use crate::amf::RtmpCommand;
 use crate::config::ForwarderConfig;
 use crate::error::Result;
-use crate::handshake::handshake_with_server;
+use crate::rtmp::handshake_with_server;
+use crate::rtmp::{RtmpCommand, RtmpMessage, RtmpMessageStream};
 use crate::rtmp::{write_rtmp_message, write_rtmp_message2};
-use crate::rtmp_codec::{RtmpMessage, RtmpMessageStream};
+
+pub use self::manager::{ForwarderManager, ForwarderManagerCommand};
+
+mod manager;
 
 /// ProtocolSnapshot caches the critical state headers and dynamic names
 /// received from the client to sync with new or reconnected destinations.

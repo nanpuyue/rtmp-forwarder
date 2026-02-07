@@ -1,9 +1,17 @@
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 
+use self::codec::RtmpMessageIter;
 use crate::error::Result;
-use crate::rtmp_codec::{RtmpMessage, RtmpMessageIter};
+
+pub use self::amf::RtmpCommand;
+pub use self::codec::{RtmpMessage, RtmpMessageStream};
+pub use self::handshake::{handshake_with_client, handshake_with_server};
+
+mod amf;
+mod codec;
+mod handshake;
 
 pub async fn write_rtmp_message<S>(s: &mut S, msg: &RtmpMessage, chunk_size: usize) -> Result<()>
 where
@@ -40,15 +48,4 @@ where
         s.write_all(chunk.raw_bytes()).await?;
     }
     Ok(())
-}
-
-/* ================= misc ================= */
-
-pub trait PutU24 {
-    fn put_u24(&mut self, v: u32);
-}
-impl PutU24 for BytesMut {
-    fn put_u24(&mut self, v: u32) {
-        self.extend_from_slice(&v.to_be_bytes()[1..]);
-    }
 }

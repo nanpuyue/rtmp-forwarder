@@ -5,8 +5,8 @@ use tracing::{info, warn};
 
 use crate::config::ForwarderConfig;
 use crate::forwarder::{ForwardEvent, Forwarder};
-use crate::rtmp_codec::RtmpMessage;
-use crate::stream_manager::{StreamEvent, StreamManager, StreamMessage, StreamSnapshot};
+use crate::rtmp::RtmpMessage;
+use crate::stream::{StreamEvent, StreamManager, StreamMessage, StreamSnapshot};
 
 pub enum ForwarderManagerCommand {
     UpdateConfig(Vec<ForwarderConfig>),

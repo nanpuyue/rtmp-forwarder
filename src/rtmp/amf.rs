@@ -2,8 +2,8 @@ use bytes::{BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::trace;
 
+use super::codec::{RtmpMessage, RtmpMessageIter};
 use crate::error::Result;
-use crate::rtmp_codec::{RtmpMessage, RtmpMessageIter};
 
 pub type ObjectItem = (String, Amf0);
 

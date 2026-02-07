@@ -7,12 +7,11 @@ use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
-use crate::amf::RtmpCommand;
 use crate::error::Result;
-use crate::handshake::handshake_with_client;
-use crate::rtmp::write_rtmp_message2;
-use crate::rtmp_codec::{RtmpMessage, RtmpMessageStream};
-use crate::stream_manager::{StreamError, StreamInfo, StreamManager, StreamState};
+use crate::rtmp::{RtmpCommand, RtmpMessage, RtmpMessageStream};
+use crate::rtmp::{handshake_with_client, write_rtmp_message2};
+use crate::stream::{StreamError, StreamInfo, StreamManager, StreamState};
+use crate::util::get_original_destination;
 
 static CLIENT_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 const DEFAULT_STREAM_ID: u32 = 1;
@@ -312,30 +311,4 @@ pub async fn handle_client(
 
     stream_manager.handle_disconnect(client_id).await;
     Ok(())
-}
-
-// 平台相关的原始目的地址获取
-#[cfg(target_os = "linux")]
-fn get_original_destination(socket: &TcpStream) -> Result<String> {
-    use nix::sys::socket::{SockaddrIn, SockaddrIn6, sockopt};
-    use std::os::unix::io::{AsRawFd, BorrowedFd};
-
-    let fd = unsafe { BorrowedFd::borrow_raw(socket.as_raw_fd()) };
-
-    // 尝试 IPv4
-    if let Ok(addr) = nix::sys::socket::getsockopt(&fd, sockopt::OriginalDst) {
-        return Ok(SockaddrIn::from(addr).to_string());
-    }
-
-    // 尝试 IPv6
-    if let Ok(addr) = nix::sys::socket::getsockopt(&fd, sockopt::Ip6tOriginalDst) {
-        return Ok(SockaddrIn6::from(addr).to_string());
-    }
-
-    Err(("Failed to get original destination").into())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn get_original_destination(_socket: &TcpStream) -> Result<String> {
-    Err(("Platform not supported").into())
 }

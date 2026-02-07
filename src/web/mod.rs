@@ -17,11 +17,12 @@ use tower_http::auth::AsyncRequireAuthorizationLayer;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 
-use crate::basic_auth::BasicAuth;
+use self::auth::BasicAuth;
 use crate::config::{GetForwarders, SharedConfig, WebConfig};
-use crate::flv_manager::FlvManager;
-use crate::forwarder_manager::ForwarderManagerCommand;
-use crate::stream_manager::{StreamEvent, StreamManager, StreamMessage};
+use crate::forwarder::ForwarderManagerCommand;
+use crate::stream::{FlvManager, StreamEvent, StreamManager, StreamMessage};
+
+mod auth;
 
 #[derive(RustEmbed)]
 #[folder = "static/"]

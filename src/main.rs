@@ -10,22 +10,16 @@ use tracing::{error, info};
 
 use crate::config::{AppConfig, ForwarderConfig, GetForwarders};
 use crate::error::{Context, Result};
-use crate::flv_manager::FlvManager;
-use crate::forwarder_manager::{ForwarderManager, ForwarderManagerCommand};
-use crate::stream_manager::StreamManager;
+use crate::forwarder::{ForwarderManager, ForwarderManagerCommand};
+use crate::stream::{FlvManager, StreamManager};
 
-mod amf;
-mod basic_auth;
 mod config;
 mod error;
-mod flv_manager;
 mod forwarder;
-mod forwarder_manager;
-mod handshake;
 mod rtmp;
-mod rtmp_codec;
 mod server;
-mod stream_manager;
+mod stream;
+mod util;
 mod web;
 
 /* ================= args ================= */

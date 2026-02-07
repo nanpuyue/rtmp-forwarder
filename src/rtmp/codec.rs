@@ -7,7 +7,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio_stream::Stream;
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 
-use crate::rtmp::PutU24;
+use crate::util::PutU24;
 
 /// RTMP 编解码器，用于在异步流中编码和解码 RTMP 消息
 #[derive(Debug, Clone)]
