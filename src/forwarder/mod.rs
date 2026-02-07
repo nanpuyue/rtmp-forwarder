@@ -247,9 +247,13 @@ impl Forwarder {
             self.config.addr,
             self.config.rtmp_url(),
         );
-        RtmpCommand::connect(1.0, app.as_str(), self.config.rtmp_url())
-            .send(w, 3, 0, 128)
-            .await?;
+        RtmpCommand::connect(
+            1.0,
+            app.as_str(),
+            format!("rtmp://{}/{}", self.config.addr, app),
+        )
+        .send(w, 3, 0, 128)
+        .await?;
 
         // 等待并处理 connect 响应
         timeout(
