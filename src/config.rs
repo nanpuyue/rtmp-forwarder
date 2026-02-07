@@ -1,8 +1,9 @@
 use std::fs;
 use std::sync::{Arc, RwLock};
 
-use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+
+use crate::error::{Context, Result};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ServerConfig {
@@ -142,8 +143,6 @@ impl AppConfig {
         config.config_path = path.to_string();
         Ok(config)
     }
-
-
 }
 
 impl GetForwarders for WebConfig {

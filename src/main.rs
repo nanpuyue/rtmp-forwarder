@@ -3,13 +3,13 @@
 
 use std::sync::{Arc, RwLock};
 
-use anyhow::Result;
 use clap::Parser;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 
 use crate::config::{AppConfig, ForwarderConfig, GetForwarders};
+use crate::error::{Context, Result};
 use crate::flv_manager::FlvManager;
 use crate::forwarder_manager::{ForwarderManager, ForwarderManagerCommand};
 use crate::stream_manager::StreamManager;
@@ -17,6 +17,7 @@ use crate::stream_manager::StreamManager;
 mod amf;
 mod basic_auth;
 mod config;
+mod error;
 mod flv_manager;
 mod forwarder;
 mod forwarder_manager;
@@ -60,22 +61,20 @@ struct Cli {
 
 fn parse_rtmp_url(url: &str) -> Result<(String, String, String)> {
     if !url.starts_with("rtmp://") {
-        return Err(anyhow::anyhow!("invalid rtmp url"));
+        return Err(("invalid rtmp url").into());
     }
 
     let s = &url[7..];
     let mut parts = s.splitn(2, '/');
 
-    let host = parts
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("missing host"))?;
+    let host = parts.next().context("missing host")?;
     let host = if host.contains(':') {
         host.to_string()
     } else {
         format!("{}:1935", host)
     };
 
-    let path = parts.next().ok_or_else(|| anyhow::anyhow!("missing app"))?;
+    let path = parts.next().context("missing app")?;
     let mut p = path.split('/');
 
     let app = p.next().unwrap().to_string();
@@ -91,10 +90,9 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let config_path = cli.config.as_deref().unwrap_or("config.json");
 
-    let mut app_config = AppConfig::load(config_path).unwrap_or_else(|_| {
-        let mut config = AppConfig::default();
-        config.config_path = config_path.to_string();
-        config
+    let mut app_config = AppConfig::load(config_path).unwrap_or(AppConfig {
+        config_path: config_path.to_string(),
+        ..Default::default()
     });
 
     if let Some(l) = cli.listen {

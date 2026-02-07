@@ -1,8 +1,8 @@
-use anyhow::{Result, anyhow};
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tracing::trace;
 
+use crate::error::Result;
 use crate::rtmp_codec::{RtmpMessage, RtmpMessageIter};
 
 pub type ObjectItem = (String, Amf0);
@@ -144,7 +144,7 @@ impl<'a> AmfReader<'a> {
 
     fn read_string(&mut self) -> Result<String> {
         if self.peek() != Some(0x02) {
-            return Err(anyhow!("not string"));
+            return Err(("not string").into());
         }
         let len = u16::from_be_bytes([self.data[1], self.data[2]]) as usize;
         let s = std::str::from_utf8(&self.data[3..3 + len])?.to_string();
@@ -155,7 +155,7 @@ impl<'a> AmfReader<'a> {
 
     fn read_number(&mut self) -> Result<f64> {
         if self.peek() != Some(0x00) {
-            return Err(anyhow!("not number"));
+            return Err(("not number").into());
         }
         let v = f64::from_be_bytes(self.data[1..9].try_into().unwrap());
         trace!(value = v, "read_number");
@@ -165,7 +165,7 @@ impl<'a> AmfReader<'a> {
 
     fn read_boolean(&mut self) -> Result<bool> {
         if self.peek() != Some(0x01) {
-            return Err(anyhow!("not boolean"));
+            return Err(("not boolean").into());
         }
         let v = self.data[1] != 0;
         trace!(value = v, "read_boolean");
@@ -175,7 +175,7 @@ impl<'a> AmfReader<'a> {
 
     fn read_null(&mut self) -> Result<()> {
         if self.peek() != Some(0x05) {
-            return Err(anyhow!("not null"));
+            return Err(("not null").into());
         }
         trace!("read_null");
         self.data = &self.data[1..];
@@ -184,7 +184,7 @@ impl<'a> AmfReader<'a> {
 
     fn read_object(&mut self) -> Result<Vec<(String, Amf0)>> {
         if self.peek() != Some(0x03) {
-            return Err(anyhow!("not object"));
+            return Err(("not object").into());
         }
         self.data = &self.data[1..];
         let mut v = Vec::new();
@@ -201,8 +201,8 @@ impl<'a> AmfReader<'a> {
                 Some(0x01) => Amf0::Boolean(self.read_boolean()?),
                 Some(0x02) => Amf0::String(self.read_string()?),
                 Some(0x03) => Amf0::Object(self.read_object()?),
-                Some(t) => return Err(anyhow!("unsupported amf type: {}", t)),
-                None => return Err(anyhow!("unexpected EOF")),
+                Some(t) => return Err(format!("unsupported amf type: {}", t).into()),
+                None => return Err(("unexpected EOF").into()),
             };
             v.push((key, val));
         }
@@ -232,7 +232,7 @@ pub struct RtmpCommand {
 impl RtmpMessage {
     pub fn command(msg: &RtmpMessage) -> Result<RtmpCommand> {
         if msg.header().msg_type != 20 {
-            return Err(anyhow!("not a command message"));
+            return Err(("not a command message").into());
         }
         let payload = msg.payload();
         let mut reader = AmfReader::new(&payload);

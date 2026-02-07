@@ -1,7 +1,8 @@
-use anyhow::{Context, Result};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::debug;
+
+use crate::error::{Context, Result};
 
 pub const HANDSHAKE_SIZE: usize = 1536;
 

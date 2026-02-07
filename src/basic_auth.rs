@@ -1,9 +1,9 @@
 use axum::body::Body;
 use axum::http::{Request, Response, StatusCode, header};
-use tower_http::auth::AsyncAuthorizeRequest;
+use base64::{Engine, engine::general_purpose};
 use std::future::Future;
 use std::pin::Pin;
-use base64::{engine::general_purpose, Engine};
+use tower_http::auth::AsyncAuthorizeRequest;
 
 #[derive(Clone)]
 pub struct BasicAuth {
@@ -54,10 +54,7 @@ where
 fn unauthorized() -> Response<Body> {
     Response::builder()
         .status(StatusCode::UNAUTHORIZED)
-        .header(
-            header::WWW_AUTHENTICATE,
-            r#"Basic realm="rtmp-forwarder""#,
-        )
+        .header(header::WWW_AUTHENTICATE, r#"Basic realm="rtmp-forwarder""#)
         .body(Body::empty())
         .unwrap()
 }

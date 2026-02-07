@@ -1,8 +1,8 @@
-use anyhow::Result;
 use bytes::{Bytes, BytesMut};
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 
+use crate::error::Result;
 use crate::rtmp_codec::{RtmpMessage, RtmpMessageIter};
 
 pub async fn write_rtmp_message<S>(s: &mut S, msg: &RtmpMessage, chunk_size: usize) -> Result<()>

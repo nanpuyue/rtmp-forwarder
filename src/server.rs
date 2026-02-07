@@ -2,13 +2,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
-use anyhow::Result;
 use bytes::Bytes;
 use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
 use crate::amf::RtmpCommand;
+use crate::error::Result;
 use crate::handshake::handshake_with_client;
 use crate::rtmp::write_rtmp_message2;
 use crate::rtmp_codec::{RtmpMessage, RtmpMessageStream};
@@ -332,10 +332,10 @@ fn get_original_destination(socket: &TcpStream) -> Result<String> {
         return Ok(SockaddrIn6::from(addr).to_string());
     }
 
-    Err(anyhow::anyhow!("Failed to get original destination"))
+    Err(("Failed to get original destination").into())
 }
 
 #[cfg(not(target_os = "linux"))]
 fn get_original_destination(_socket: &TcpStream) -> Result<String> {
-    Err(anyhow::anyhow!("Platform not supported"))
+    Err(("Platform not supported").into())
 }

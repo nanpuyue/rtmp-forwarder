@@ -1,6 +1,5 @@
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
 use bytes::Bytes;
 use tokio::net::{TcpStream, tcp};
 use tokio::sync::mpsc;
@@ -12,6 +11,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::amf::RtmpCommand;
 use crate::config::ForwarderConfig;
+use crate::error::Result;
 use crate::handshake::handshake_with_server;
 use crate::rtmp::{write_rtmp_message, write_rtmp_message2};
 use crate::rtmp_codec::{RtmpMessage, RtmpMessageStream};
@@ -385,7 +385,7 @@ impl Forwarder {
                             "#{} [{}] received _error response tx_id: {}",
                             self.index, self.config.addr, tx_id
                         );
-                        return Err(anyhow::anyhow!("Error: tx_id={tx_id}"));
+                        return Err(format!("server returned an error for tx_id {tx_id}").into());
                     }
                     "onStatus" => {
                         // TODO, 处理 onStatus 响应
