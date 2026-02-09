@@ -39,7 +39,7 @@ pub enum ForwardEvent {
 struct ConnectionState {
     conn: Option<tcp::OwnedWriteHalf>,
     failure: u32,
-    last_attempt: Option<Instant>,
+    last_attempt: Instant,
 }
 
 const MAX_FAILURE: u32 = 5;
@@ -49,28 +49,27 @@ impl ConnectionState {
         Self {
             conn: None,
             failure: 0,
-            last_attempt: None,
+            last_attempt: Instant::now(),
         }
     }
 
-    fn can_attempt(&self) -> bool {
+    fn can_attempt(&mut self) -> bool {
+        if self.last_attempt.elapsed() >= Duration::from_mins(5) {
+            self.failure = 0;
+        }
         if self.failure >= MAX_FAILURE {
             return false;
         }
 
-        if let Some(last) = self.last_attempt {
-            let backoff_secs = match self.failure {
-                0 => 0,
-                1 => 5,
-                2 => 10,
-                3 => 20,
-                4 => 30,
-                _ => 30,
-            };
-            last.elapsed() >= Duration::from_secs(backoff_secs)
-        } else {
-            true
-        }
+        let backoff_secs = match self.failure {
+            0 => 0,
+            1 => 5,
+            2 => 10,
+            3 => 20,
+            4 => 30,
+            _ => 30,
+        };
+        self.last_attempt.elapsed() >= Duration::from_secs(backoff_secs)
     }
 }
 
@@ -106,7 +105,7 @@ impl Forwarder {
 
                     // Try to establish connection with retry logic
                     if state.conn.is_none() && state.can_attempt() {
-                        state.last_attempt = Some(Instant::now());
+                        state.last_attempt = Instant::now();
                         debug!(
                             "[{}] Connecting (attempt #{})",
                             self.config.addr,
@@ -119,8 +118,6 @@ impl Forwarder {
                                 self.index, self.config.addr
                             );
                             state.conn = Some(conn);
-                            state.failure = 0;
-                            state.last_attempt = None;
                         } else {
                             state.failure += 1;
                             if state.failure >= MAX_FAILURE {
