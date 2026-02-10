@@ -136,6 +136,14 @@ impl Forwarder {
                         if let Err(e) = write_rtmp_message(w, &msg, self.chunk_size).await {
                             error!("[{}] Write error: {}", self.config.addr, e);
                             state.conn = None;
+                            state.failure += 1;
+                            if state.failure >= MAX_FAILURE {
+                                warn!(
+                                    "[{}] Failed {} times, giving up",
+                                    self.config.addr, state.failure
+                                );
+                                break;
+                            }
                         }
 
                         // Sync output chunk size if destination requests change (via SetChunkSize)
