@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::rtmp::{RtmpCommand, RtmpMessage, RtmpMessageStream};
 use crate::rtmp::{handshake_with_client, write_rtmp_message2};
 use crate::stream::{StreamError, StreamInfo, StreamManager, StreamState};
-use crate::util::get_original_destination;
+use crate::util::{get_original_destination, try_handle_socks5};
 
 static CLIENT_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 const DEFAULT_STREAM_ID: u32 = 1;
@@ -23,8 +23,9 @@ pub async fn handle_client(
 ) -> Result<()> {
     client.set_nodelay(true)?;
 
-    // 获取原始目的地址
-    let orig_dest_addr = get_original_destination(&client).ok();
+    let orig_dest_addr = try_handle_socks5(&mut client)
+        .await?
+        .or_else(|| get_original_destination(&client).ok());
     if let Some(addr) = &orig_dest_addr {
         info!("Captured original destination address: {addr}",);
     }
@@ -84,11 +85,16 @@ pub async fn handle_client(
                     let mut command_stream = None;
                     match cmd.name.as_str() {
                         "connect" => {
-                            command_app = cmd
-                                .command_object
-                                .into_iter()
-                                .find(|(k, _)| k == "app")
-                                .and_then(|(_, v)| v.into_string());
+                            for (k, v) in cmd.command_object.into_iter() {
+                                match k.as_str() {
+                                    "tcUrl" => info!(
+                                        "Client {client_id} connect with tcUrl: {}",
+                                        v.string().unwrap_or_default()
+                                    ),
+                                    "app" => command_app = v.into_string(),
+                                    _ => {}
+                                }
+                            }
                         }
                         "publish" | "releaseStream" | "FCPublish" => {
                             command_stream =
