@@ -13,6 +13,8 @@ pub enum Amf0 {
     Number(f64),
     Boolean(bool),
     Object(Vec<(String, Amf0)>),
+    EcmaArray(Vec<(String, Amf0)>), // 添加 ECMA Array 类型
+    Null,                           // 添加 Null 类型以支持正确解析
 }
 
 impl Amf0 {
@@ -105,6 +107,10 @@ fn write_value(b: &mut BytesMut, v: &Amf0) {
                 obj.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
             write_object(b, &items);
         }
+        Amf0::EcmaArray(arr) => {
+            write_ecma_array(b, arr); // 添加对 ECMA Array 的写入支持
+        }
+        Amf0::Null => write_null(b), // 添加对 Null 类型的写入支持
     }
 }
 
@@ -133,6 +139,18 @@ fn write_object(b: &mut BytesMut, o: &[(&str, Amf0)]) {
     }
     b.extend_from_slice(&[0, 0, 9]);
 }
+
+fn write_ecma_array(b: &mut BytesMut, arr: &Vec<(String, Amf0)>) {
+    b.put_u8(0x08); // ECMA Array 类型标记
+    b.put_u32(arr.len() as u32); // 32位长度前缀
+    for (k, v) in arr {
+        b.put_u16(k.len() as u16);
+        b.extend_from_slice(k.as_bytes());
+        write_value(b, v);
+    }
+    b.extend_from_slice(&[0, 0, 9]); // 结尾标记
+}
+
 pub struct AmfReader<'a> {
     data: &'a [u8],
 }
@@ -173,13 +191,47 @@ impl<'a> AmfReader<'a> {
         Ok(v)
     }
 
-    fn read_null(&mut self) -> Result<()> {
+    fn read_null(&mut self) -> Result<Amf0> {
         if self.peek() != Some(0x05) {
             return Err(("not null").into());
         }
         trace!("read_null");
         self.data = &self.data[1..];
-        Ok(())
+        Ok(Amf0::Null)
+    }
+
+    // 辅助函数：读取单个键值对
+    fn read_key_value_pair(&mut self) -> Result<(String, Amf0)> {
+        // 检查是否有足够的数据来读取键长度
+        if self.data.len() < 2 {
+            return Err(("incomplete key length").into());
+        }
+
+        let klen = u16::from_be_bytes([self.data[0], self.data[1]]) as usize;
+        self.data = &self.data[2..];
+
+        // 检查是否有足够的数据来读取键
+        if self.data.len() < klen {
+            return Err(("incomplete key").into());
+        }
+
+        let key = std::str::from_utf8(&self.data[..klen])
+            .map_err(|_| "invalid utf-8 in key")?
+            .to_string();
+        self.data = &self.data[klen..];
+
+        // 读取值
+        let val = match self.peek() {
+            Some(0x00) => Amf0::Number(self.read_number()?),
+            Some(0x01) => Amf0::Boolean(self.read_boolean()?),
+            Some(0x02) => Amf0::String(self.read_string()?),
+            Some(0x03) => Amf0::Object(self.read_object()?),
+            Some(0x08) => Amf0::EcmaArray(self.read_ecma_array()?),
+            Some(0x05) => Amf0::Null, // 返回 Null 而不是 ()
+            Some(t) => return Err(format!("unsupported amf type: {}", t).into()),
+            None => return Err(("unexpected EOF").into()),
+        };
+        Ok((key, val))
     }
 
     fn read_object(&mut self) -> Result<Vec<(String, Amf0)>> {
@@ -187,26 +239,62 @@ impl<'a> AmfReader<'a> {
             return Err(("not object").into());
         }
         self.data = &self.data[1..];
+
         let mut v = Vec::new();
         loop {
             if self.data.len() >= 3 && self.data[..3] == [0, 0, 9] {
                 self.data = &self.data[3..];
                 break;
             }
-            let klen = u16::from_be_bytes([self.data[0], self.data[1]]) as usize;
-            let key = std::str::from_utf8(&self.data[2..2 + klen])?.to_string();
-            self.data = &self.data[2 + klen..];
-            let val = match self.peek() {
-                Some(0x00) => Amf0::Number(self.read_number()?),
-                Some(0x01) => Amf0::Boolean(self.read_boolean()?),
-                Some(0x02) => Amf0::String(self.read_string()?),
-                Some(0x03) => Amf0::Object(self.read_object()?),
-                Some(t) => return Err(format!("unsupported amf type: {}", t).into()),
-                None => return Err(("unexpected EOF").into()),
-            };
+
+            let (key, val) = self.read_key_value_pair()?;
             v.push((key, val));
         }
+
         trace!(pairs = v.len(), "read_object parsed key-value pairs");
+        Ok(v)
+    }
+
+    fn read_ecma_array(&mut self) -> Result<Vec<(String, Amf0)>> {
+        if self.peek() != Some(0x08) {
+            return Err(("not ecma array").into());
+        }
+        self.data = &self.data[1..]; // 跳过类型标记
+
+        // 读取32位长度
+        if self.data.len() < 4 {
+            return Err(("incomplete ecma array length").into());
+        }
+        let len =
+            u32::from_be_bytes([self.data[0], self.data[1], self.data[2], self.data[3]]) as usize;
+        self.data = &self.data[4..];
+
+        // 添加长度限制以防止OOM攻击
+        const MAX_ECMA_ARRAY_LEN: usize = 16; // 设置最大长度限制
+        if len > MAX_ECMA_ARRAY_LEN {
+            return Err(format!(
+                "ecma array length {} exceeds maximum allowed {}",
+                len, MAX_ECMA_ARRAY_LEN
+            )
+            .into());
+        }
+
+        // 预分配容量以防止 OOM 攻击
+        let mut v = Vec::with_capacity(len);
+
+        // 读取 len 个键值对
+        for _ in 0..len {
+            let (key, val) = self.read_key_value_pair()?;
+            v.push((key, val));
+        }
+
+        // 检查结尾标记 [0, 0, 9]
+        if self.data.len() < 3 || self.data[..3] != [0, 0, 9] {
+            return Err(("missing ecma array end marker").into());
+        }
+        self.data = &self.data[3..];
+
+        trace!(pairs = v.len(), "read_ecma_array parsed key-value pairs");
         Ok(v)
     }
 
@@ -241,6 +329,9 @@ impl RtmpMessage {
         let command_object = if reader.peek() == Some(0x05) {
             reader.read_null()?;
             Vec::new()
+        } else if reader.peek() == Some(0x08) {
+            // 如果命令对象是 ECMA Array 类型
+            reader.read_ecma_array()?
         } else {
             reader.read_object()?
         };
@@ -251,6 +342,7 @@ impl RtmpMessage {
                 Some(0x01) => args.push(Amf0::Boolean(reader.read_boolean()?)),
                 Some(0x02) => args.push(Amf0::String(reader.read_string()?)),
                 Some(0x03) => args.push(Amf0::Object(reader.read_object()?)),
+                Some(0x08) => args.push(Amf0::EcmaArray(reader.read_ecma_array()?)), // 添加对 ECMA Array 参数的支持
                 Some(0x05) => {
                     reader.read_null()?;
                     break;
