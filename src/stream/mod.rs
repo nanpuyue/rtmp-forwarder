@@ -94,8 +94,23 @@ impl StreamManager {
                 18 | 15 => {
                     s.metadata = Some(msg.clone());
                 }
-                9 if payload.len() >= 2 && payload[0] == 0x17 && payload[1] == 0 => {
-                    s.video_seq_hdr = Some(msg.clone());
+                9 if payload.len() >= 2 => {
+                    let is_ex_header = payload[0] & 0x80 != 0;
+                    if is_ex_header {
+                        // Enhanced RTMP: check IsExVideoHeader and PacketTypeSequenceStart
+                        let frame_type = (payload[0] >> 4) & 0x07;
+                        let pkt_type = payload[0] & 0x0F;
+                        if frame_type == 1 && pkt_type == 0 {
+                            s.video_seq_hdr = Some(msg.clone());
+                        }
+                    } else {
+                        // Legacy: AVC (codec_id=7) or HEVC (codec_id=12)
+                        let frame_type = payload[0] >> 4;
+                        let codec_id = payload[0] & 0x0F;
+                        if frame_type == 1 && (codec_id == 7 || codec_id == 12) && payload[1] == 0 {
+                            s.video_seq_hdr = Some(msg.clone());
+                        }
+                    }
                 }
                 8 if payload.len() >= 2 && (payload[0] >> 4) == 10 && payload[1] == 0 => {
                     s.audio_seq_hdr = Some(msg.clone());
