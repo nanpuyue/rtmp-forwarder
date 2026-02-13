@@ -2,6 +2,7 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use tokio::net::{TcpStream, tcp};
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{broadcast, mpsc};
@@ -89,10 +90,25 @@ pub struct Forwarder {
 impl Forwarder {
     /// Main loop for the forwarder task.
     pub async fn run(mut self) {
+        info!("#{} [{}] started", self.index, self.config.addr);
         let mut state = ConnectionState::new();
 
-        info!("#{} [{}] started", self.index, self.config.addr);
-        while let Ok(event) = self.rx.recv().await {
+        loop {
+            let event = match self.rx.recv().await {
+                Ok(x) => x,
+                Err(RecvError::Lagged(n)) => {
+                    debug!(
+                        "#{} [{}] lagged {} rtmp messages",
+                        self.index, self.config.addr, n
+                    );
+                    continue;
+                }
+                Err(e) => {
+                    warn!("#{} [{}] recv error: {}", self.index, self.config.addr, e);
+                    break;
+                }
+            };
+
             match event {
                 ForwardEvent::Message(mut msg) => {
                     // 元数据与序列头：如果转发器启动时客户端尚未发送则后续原样转发
