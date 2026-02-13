@@ -116,8 +116,9 @@ impl ForwarderManager {
                 metadata: snapshot.metadata,
                 video_seq_hdr: snapshot.video_seq_hdr,
                 audio_seq_hdr: snapshot.audio_seq_hdr,
-                client_app: snapshot.app_name.clone(),
-                client_stream: snapshot.stream_key.clone(),
+                tc_url: snapshot.tc_url,
+                client_app: snapshot.app_name,
+                client_stream: snapshot.stream_key,
             },
         };
 

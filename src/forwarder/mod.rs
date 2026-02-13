@@ -26,6 +26,7 @@ pub struct ProtocolSnapshot {
     pub metadata: Option<RtmpMessage>,
     pub video_seq_hdr: Option<RtmpMessage>,
     pub audio_seq_hdr: Option<RtmpMessage>,
+    pub tc_url: Option<String>,
     pub client_app: Option<String>,
     pub client_stream: Option<String>,
 }
@@ -252,13 +253,17 @@ impl Forwarder {
             self.config.addr,
             self.config.rtmp_url(),
         );
-        RtmpCommand::connect(
-            1.0,
-            app.as_str(),
-            format!("rtmp://{}/{}", self.config.addr, app),
-        )
-        .send(w, 3, 0, 128)
-        .await?;
+
+        let tc_url = if self.index == 0
+            && let Some(tc_url) = &self.snapshot.tc_url
+        {
+            tc_url
+        } else {
+            &format!("rtmp://{}/{}", self.config.addr, app)
+        };
+        RtmpCommand::connect(1.0, app, tc_url)
+            .send(w, 3, 0, 128)
+            .await?;
 
         // 等待并处理 connect 响应
         timeout(

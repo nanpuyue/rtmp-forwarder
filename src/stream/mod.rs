@@ -35,6 +35,7 @@ pub enum StreamMessage {
 #[derive(Clone, Debug)]
 pub struct StreamSnapshot {
     pub chunk_size: usize,
+    pub tc_url: Option<String>,
     pub app_name: Option<String>,
     pub stream_key: Option<String>,
     pub metadata: Option<RtmpMessage>,
@@ -47,6 +48,7 @@ pub struct StreamSnapshot {
 pub struct StreamInfo {
     pub stream_id: u32,
     pub client_id: u32,
+    pub tc_url: Option<String>,
     pub app_name: Option<String>,
     pub stream_key: Option<String>,
     pub state: StreamState,
@@ -131,6 +133,7 @@ impl StreamManager {
             .filter(|s| s.state == StreamState::Publishing)
             .map(|s| StreamSnapshot {
                 chunk_size: s.chunk_szie,
+                tc_url: s.tc_url.clone(),
                 app_name: s.app_name.clone(),
                 stream_key: s.stream_key.clone(),
                 metadata: s.metadata.clone(),

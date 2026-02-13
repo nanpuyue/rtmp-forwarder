@@ -38,6 +38,7 @@ pub async fn handle_client(
     let mut stream = Some(StreamInfo {
         stream_id: DEFAULT_STREAM_ID,
         client_id,
+        tc_url: None,
         app_name: None,
         stream_key: None,
         state: StreamState::None,
@@ -87,10 +88,15 @@ pub async fn handle_client(
                         "connect" => {
                             for (k, v) in cmd.command_object.into_iter() {
                                 match k.as_str() {
-                                    "tcUrl" => info!(
-                                        "Client {client_id} connect with tcUrl: {}",
-                                        v.string().unwrap_or_default()
-                                    ),
+                                    "tcUrl" => {
+                                        let tc_url = v.into_string();
+                                        if let Some(x) = tc_url.as_deref() {
+                                            info!("Client {client_id} connect with tcUrl: {x}");
+                                            if let Some(s) = stream.as_mut() {
+                                                s.tc_url = tc_url;
+                                            }
+                                        }
+                                    }
                                     "app" => command_app = v.into_string(),
                                     _ => {}
                                 }
