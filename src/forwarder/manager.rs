@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, broadcast, mpsc};
 use tracing::{info, warn};
 
 use crate::config::ForwarderConfig;
@@ -17,7 +17,8 @@ pub struct ForwarderManager {
     stream_manager: Arc<StreamManager>,
     config: Arc<RwLock<Vec<ForwarderConfig>>>,
     command_rx: mpsc::Receiver<ForwarderManagerCommand>,
-    running_configs: Arc<RwLock<Vec<ForwarderConfig>>>,
+    event_tx: broadcast::Sender<ForwardEvent>,
+    running_configs: Vec<ForwarderConfig>,
 }
 
 impl ForwarderManager {
@@ -25,21 +26,22 @@ impl ForwarderManager {
         stream_manager: Arc<StreamManager>,
         initial_config: Vec<ForwarderConfig>,
     ) -> (Self, mpsc::Sender<ForwarderManagerCommand>) {
-        let (tx, rx) = mpsc::channel(32); // 使用有界通道，缓冲区大小为32
+        let (cmd_tx, cmd_rx) = mpsc::channel(32);
+        let (event_tx, _) = broadcast::channel(128);
         (
             Self {
                 stream_manager,
                 config: Arc::new(RwLock::new(initial_config)),
-                command_rx: rx,
-                running_configs: Arc::new(RwLock::new(Vec::new())),
+                command_rx: cmd_rx,
+                event_tx: event_tx.clone(),
+                running_configs: Vec::new(),
             },
-            tx,
+            cmd_tx,
         )
     }
 
     pub async fn run(mut self) {
         let mut msg_rx = self.stream_manager.subscribe();
-        let mut forwarders: Vec<Option<mpsc::Sender<ForwardEvent>>> = Vec::new();
 
         info!("ForwarderManager started");
 
@@ -49,9 +51,7 @@ impl ForwarderManager {
                     match stream_msg {
                         StreamMessage::RtmpMessage(msg) => {
                             if should_forward(&msg) {
-                                for tx in forwarders.iter().flatten() {
-                                    tx.try_send(ForwardEvent::Message(msg.clone())).ok();
-                                }
+                                self.event_tx.send(ForwardEvent::Message(msg)).ok();
                             }
                         }
                         StreamMessage::StateChanged(event) => {
@@ -59,12 +59,12 @@ impl ForwarderManager {
                                 StreamEvent::Publishing => {
                                     if let Some(snapshot) = self.stream_manager.get_stream_snapshot().await {
                                         info!("Stream publishing");
-                                        self.sync_forwarders(&mut forwarders, snapshot).await;
+                                        self.sync_forwarders(snapshot).await;
                                     }
                                 }
                                 StreamEvent::Idle | StreamEvent::Closed | StreamEvent::Deleted => {
                                     info!("Stream stopped");
-                                    self.stop_all_forwarders(&mut forwarders).await;
+                                    self.stop_all_forwarders();
                                 }
                                 _ => {}
                             }
@@ -79,9 +79,9 @@ impl ForwarderManager {
                             *self.config.write().await = new_config;
 
                             if let Some(snapshot) = self.stream_manager.get_stream_snapshot().await {
-                                self.sync_forwarders(&mut forwarders, snapshot).await;
+                                self.sync_forwarders(snapshot).await;
                             } else {
-                                self.stop_all_forwarders(&mut forwarders).await;
+                                self.stop_all_forwarders();
                             }
                         }
                         ForwarderManagerCommand::Shutdown => {
@@ -93,7 +93,7 @@ impl ForwarderManager {
             }
         }
 
-        self.stop_all_forwarders(&mut forwarders).await;
+        self.stop_all_forwarders();
         info!("ForwarderManager stopped");
     }
 
@@ -102,9 +102,9 @@ impl ForwarderManager {
         index: usize,
         config: &ForwarderConfig,
         snapshot: StreamSnapshot,
-    ) -> mpsc::Sender<ForwardEvent> {
+    ) {
         let chunk_size = snapshot.chunk_size;
-        let (tx, rx) = mpsc::channel(128);
+        let rx = self.event_tx.subscribe();
 
         let forwarder = Forwarder {
             index,
@@ -124,21 +124,15 @@ impl ForwarderManager {
 
         tokio::spawn(forwarder.run());
         info!("Started forwarder #{}: {}", index, config.addr);
-        tx
     }
 
-    async fn stop_forwarder(&self, index: usize, tx: mpsc::Sender<ForwardEvent>) {
-        tx.send(ForwardEvent::Shutdown).await.ok();
+    async fn stop_forwarder(&self, index: usize) {
+        self.event_tx.send(ForwardEvent::Shutdown(index)).ok();
         info!("Stopped forwarder #{}", index);
     }
 
-    async fn sync_forwarders(
-        &self,
-        forwarders: &mut Vec<Option<mpsc::Sender<ForwardEvent>>>,
-        snapshot: StreamSnapshot,
-    ) {
+    async fn sync_forwarders(&mut self, snapshot: StreamSnapshot) {
         let mut config = self.config.read().await.clone();
-        let mut running_configs = self.running_configs.write().await;
 
         // 中继地址为空时使用原始地址
         if let Some(relay) = config.get_mut(0) {
@@ -159,48 +153,40 @@ impl ForwarderManager {
         let mut stopped = 0;
         let mut restarted = 0;
 
-        let max_len = config.len().max(forwarders.len());
+        let max_len = config.len().max(self.running_configs.len());
 
         for index in 0..max_len {
             let new_config = config.get(index);
-            let old_config = running_configs.get(index);
-            let forwarder = if index < forwarders.len() {
-                &mut forwarders[index]
-            } else {
-                forwarders.push(None);
-                &mut forwarders[index]
-            };
+            let old_config = self.running_configs.get(index);
 
-            match (new_config, forwarder.as_ref()) {
-                (Some(new), Some(_)) if !new.enabled => {
+            match (new_config, old_config) {
+                (Some(new), Some(old)) if !new.enabled && old.enabled => {
                     // Disabled, stop
-                    let tx = forwarder.take().unwrap();
-                    self.stop_forwarder(index, tx).await;
+                    self.stop_forwarder(index).await;
                     stopped += 1;
                 }
                 (Some(new), None) if new.enabled => {
                     // Enabled and not running, start
-                    let tx = self.start_forwarder(index, new, snapshot.clone()).await;
-                    *forwarder = Some(tx);
+                    self.start_forwarder(index, new, snapshot.clone()).await;
                     started += 1;
                 }
-                (Some(new), Some(_)) if new.enabled => {
-                    // Enabled and running, check if config changed
-                    if let Some(old) = old_config
-                        && (old.addr != new.addr || old.app != new.app || old.stream != new.stream)
-                    {
+                (Some(new), Some(old)) if new.enabled && !old.enabled => {
+                    // Was disabled, now enabled, start
+                    self.start_forwarder(index, new, snapshot.clone()).await;
+                    started += 1;
+                }
+                (Some(new), Some(old)) if new.enabled && old.enabled => {
+                    // Both enabled, check if config changed
+                    if old.addr != new.addr || old.app != new.app || old.stream != new.stream {
                         // Restart
-                        let tx = forwarder.take().unwrap();
-                        self.stop_forwarder(index, tx).await;
-                        let tx = self.start_forwarder(index, new, snapshot.clone()).await;
-                        *forwarder = Some(tx);
+                        self.stop_forwarder(index).await;
+                        self.start_forwarder(index, new, snapshot.clone()).await;
                         restarted += 1;
                     }
                 }
-                (None, Some(_)) => {
+                (None, Some(old)) if old.enabled => {
                     // Config removed, stop
-                    let tx = forwarder.take().unwrap();
-                    self.stop_forwarder(index, tx).await;
+                    self.stop_forwarder(index).await;
                     stopped += 1;
                 }
                 _ => {
@@ -209,11 +195,8 @@ impl ForwarderManager {
             }
         }
 
-        // Truncate to config length
-        forwarders.truncate(config.len());
-
         // Update running_configs
-        *running_configs = config;
+        self.running_configs = config;
 
         info!(
             "Forwarders synced: {} started, {} stopped, {} restarted",
@@ -221,12 +204,14 @@ impl ForwarderManager {
         );
     }
 
-    async fn stop_all_forwarders(&self, forwarders: &mut [Option<mpsc::Sender<ForwardEvent>>]) {
-        for (index, tx) in forwarders.iter_mut().enumerate() {
-            if let Some(tx) = tx.take() {
-                self.stop_forwarder(index, tx).await;
+    fn stop_all_forwarders(&mut self) {
+        for (index, config) in self.running_configs.iter().enumerate() {
+            if config.enabled {
+                self.event_tx.send(ForwardEvent::Shutdown(index)).ok();
+                info!("Stopped forwarder #{}", index);
             }
         }
+        self.running_configs.clear();
     }
 }
 

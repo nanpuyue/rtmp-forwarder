@@ -2,9 +2,9 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use tokio::net::{TcpStream, tcp};
-use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::{broadcast, mpsc};
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
@@ -31,9 +31,10 @@ pub struct ProtocolSnapshot {
     pub client_stream: Option<String>,
 }
 
+#[derive(Clone)]
 pub enum ForwardEvent {
     Message(RtmpMessage),
-    Shutdown,
+    Shutdown(usize),
 }
 
 /// Retry state for connection attempts
@@ -81,7 +82,7 @@ pub struct Forwarder {
     pub chunk_size: usize,
     pub stream_id: u32,
     pub config: ForwarderConfig,
-    pub rx: mpsc::Receiver<ForwardEvent>,
+    pub rx: broadcast::Receiver<ForwardEvent>,
     pub snapshot: ProtocolSnapshot,
 }
 
@@ -91,8 +92,7 @@ impl Forwarder {
         let mut state = ConnectionState::new();
 
         info!("#{} [{}] started", self.index, self.config.addr);
-
-        while let Some(event) = self.rx.recv().await {
+        while let Ok(event) = self.rx.recv().await {
             match event {
                 ForwardEvent::Message(mut msg) => {
                     // 元数据与序列头：如果转发器启动时客户端尚未发送则后续原样转发
@@ -154,11 +154,13 @@ impl Forwarder {
                         }
                     }
                 }
-                ForwardEvent::Shutdown => {
-                    if let Some(ref mut w) = state.conn {
-                        self.shutdown(w).await;
+                ForwardEvent::Shutdown(index) => {
+                    if index == self.index {
+                        if let Some(ref mut w) = state.conn {
+                            self.shutdown(w).await;
+                        }
+                        break;
                     }
-                    break;
                 }
             }
         }
