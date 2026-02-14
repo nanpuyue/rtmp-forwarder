@@ -184,7 +184,7 @@ impl StreamManager {
             })
     }
 
-    async fn default_stream_state(&self) -> (u32, StreamState) {
+    pub async fn default_stream_state(&self) -> (u32, StreamState) {
         let stream = self.default_stream.read().await;
         let client_id = stream.as_ref().map_or(0, |s| s.client_id);
         let state = stream.as_ref().map_or(StreamState::None, |s| s.state);

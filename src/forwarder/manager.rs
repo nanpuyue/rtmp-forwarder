@@ -6,7 +6,7 @@ use tracing::{info, warn};
 use crate::config::ForwarderConfig;
 use crate::forwarder::{ForwardEvent, Forwarder};
 use crate::rtmp::RtmpMessage;
-use crate::stream::{StreamEvent, StreamManager, StreamMessage, StreamSnapshot};
+use crate::stream::{StreamEvent, StreamManager, StreamMessage, StreamSnapshot, StreamState};
 
 pub enum ForwarderManagerCommand {
     UpdateConfig(Vec<ForwarderConfig>),
@@ -63,8 +63,10 @@ impl ForwarderManager {
                                     }
                                 }
                                 StreamEvent::Idle | StreamEvent::Closed | StreamEvent::Deleted => {
-                                    info!("Stream stopped");
-                                    self.stop_all_forwarders();
+                                    if !self.running_configs.is_empty() {
+                                        info!("Stream stopped");
+                                        self.stop_all_forwarders();
+                                    }
                                 }
                                 _ => {}
                             }
@@ -78,11 +80,10 @@ impl ForwarderManager {
                             info!("Received config update with {} forwarders", new_config.len());
                             *self.config.write().await = new_config;
 
-                            if let Some(snapshot) = self.stream_manager.get_stream_snapshot().await {
-                                self.sync_forwarders(snapshot).await;
-                            } else {
-                                self.stop_all_forwarders();
-                            }
+                            if let (_, StreamState::Publishing) = self.stream_manager.default_stream_state().await
+                                && let Some(snapshot) = self.stream_manager.get_stream_snapshot().await {
+                                    self.sync_forwarders(snapshot).await;
+                                }
                         }
                         ForwarderManagerCommand::Shutdown => {
                             info!("ForwarderManager shutting down");
@@ -97,12 +98,7 @@ impl ForwarderManager {
         info!("ForwarderManager stopped");
     }
 
-    async fn start_forwarder(
-        &self,
-        index: usize,
-        config: &ForwarderConfig,
-        snapshot: StreamSnapshot,
-    ) {
+    fn start_forwarder(&self, index: usize, config: &ForwarderConfig, snapshot: StreamSnapshot) {
         let chunk_size = snapshot.chunk_size;
         let rx = self.event_tx.subscribe();
 
@@ -126,7 +122,7 @@ impl ForwarderManager {
         info!("Started forwarder #{}: {}", index, config.addr);
     }
 
-    async fn stop_forwarder(&self, index: usize) {
+    fn stop_forwarder(&self, index: usize) {
         self.event_tx.send(ForwardEvent::Shutdown(index)).ok();
         info!("Stopped forwarder #{}", index);
     }
@@ -162,31 +158,31 @@ impl ForwarderManager {
             match (new_config, old_config) {
                 (Some(new), Some(old)) if !new.enabled && old.enabled => {
                     // Disabled, stop
-                    self.stop_forwarder(index).await;
+                    self.stop_forwarder(index);
                     stopped += 1;
                 }
                 (Some(new), None) if new.enabled => {
                     // Enabled and not running, start
-                    self.start_forwarder(index, new, snapshot.clone()).await;
+                    self.start_forwarder(index, new, snapshot.clone());
                     started += 1;
                 }
                 (Some(new), Some(old)) if new.enabled && !old.enabled => {
                     // Was disabled, now enabled, start
-                    self.start_forwarder(index, new, snapshot.clone()).await;
+                    self.start_forwarder(index, new, snapshot.clone());
                     started += 1;
                 }
                 (Some(new), Some(old)) if new.enabled && old.enabled => {
                     // Both enabled, check if config changed
                     if old.addr != new.addr || old.app != new.app || old.stream != new.stream {
                         // Restart
-                        self.stop_forwarder(index).await;
-                        self.start_forwarder(index, new, snapshot.clone()).await;
+                        self.stop_forwarder(index);
+                        self.start_forwarder(index, new, snapshot.clone());
                         restarted += 1;
                     }
                 }
                 (None, Some(old)) if old.enabled => {
                     // Config removed, stop
-                    self.stop_forwarder(index).await;
+                    self.stop_forwarder(index);
                     stopped += 1;
                 }
                 _ => {
