@@ -489,7 +489,7 @@ impl RtmpCommand {
         S: AsyncWrite + Unpin,
     {
         for chunk in
-            RtmpMessageIter::new_with_payload(csid, 0, 20, stream_id, chunk_size, &self.payload())
+            RtmpMessageIter::from_payload(csid, 0, 20, stream_id, chunk_size, &self.payload())
         {
             w.write_all(chunk.raw_bytes()).await?;
         }

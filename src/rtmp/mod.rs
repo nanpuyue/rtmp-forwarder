@@ -32,7 +32,7 @@ where
             s.write_all(chunk.raw_bytes()).await?;
         }
     } else {
-        for chunk in RtmpMessageIter::new_with_msg(msg, chunk_size) {
+        for chunk in RtmpMessageIter::from_message(msg, chunk_size) {
             s.write_all(chunk.raw_bytes()).await?;
         }
     }
@@ -52,7 +52,7 @@ where
     S: AsyncWrite + Unpin,
 {
     for chunk in
-        RtmpMessageIter::new_with_payload(csid, timestamp, msg_type, stream_id, chunk_size, payload)
+        RtmpMessageIter::from_payload(csid, timestamp, msg_type, stream_id, chunk_size, payload)
     {
         s.write_all(chunk.raw_bytes()).await?;
     }

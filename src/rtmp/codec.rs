@@ -334,7 +334,7 @@ impl<S: AsyncRead + Unpin> Stream for RtmpMessageStream<S> {
 }
 
 impl RtmpMessageIter {
-    pub fn new_with_payload(
+    pub fn from_payload(
         csid: u8,
         timestamp: u32,
         msg_type: u8,
@@ -357,7 +357,7 @@ impl RtmpMessageIter {
         }
     }
 
-    pub fn new_with_msg(msg: &RtmpMessage, chunk_size: usize) -> Self {
+    pub fn from_message(msg: &RtmpMessage, chunk_size: usize) -> Self {
         let payload = msg.payload();
         Self {
             csid: msg.csid as usize,
