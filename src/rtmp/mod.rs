@@ -3,6 +3,7 @@ use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 
 use self::codec::RtmpMessageIter;
+use crate::error::Context;
 use crate::error::Result;
 
 pub use self::amf::RtmpCommand;
@@ -17,8 +18,16 @@ pub async fn write_rtmp_message<S>(s: &mut S, msg: &RtmpMessage, chunk_size: usi
 where
     S: AsyncWrite + Unpin,
 {
-    // chunk size 匹配时原样转发
-    if chunk_size == msg.chunk_size() {
+    // chunk size 匹配，并且首个 chunk format 是 0 或者 1 时原样转发
+    if chunk_size == msg.chunk_size() && {
+        let fmt = msg
+            .chunks()
+            .first()
+            .context("message has no chunk")?
+            .header()
+            .fmt;
+        fmt == 0 || fmt == 1
+    } {
         for chunk in msg.chunks() {
             s.write_all(chunk.raw_bytes()).await?;
         }

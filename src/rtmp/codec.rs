@@ -43,6 +43,10 @@ pub struct RtmpChunk {
 }
 
 impl RtmpChunk {
+    pub fn header(&self) -> &RtmpChunkHeader {
+        &self.header
+    }
+
     pub fn raw_bytes(&self) -> &Bytes {
         &self.raw_bytes
     }
