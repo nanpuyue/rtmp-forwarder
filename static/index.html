@@ -552,6 +552,13 @@
                 try {
                     const data = JSON.parse(event.data);
                     console.log('Stream status:', data.status);
+                    streamState = data.status;
+                    
+                    if (streamState === 'publishing') {
+                        fetchStreamInfo();
+                    } else {
+                        updateRelay();
+                    }
 
                     if (data.status === 'publishing') {
                         if (!isPlaying) {
@@ -649,6 +656,7 @@
         let editingIndex = -1;
         let streamInfo = null;
         let streamInfoInterval = null;
+        let streamState = 'idle';  // 从 WebSocket 获取的推流状态
 
         const EDIT_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -660,8 +668,7 @@
             document.getElementById('relay_enabled').checked = config.relay_enabled;
             document.getElementById('relay-edit-btn').innerHTML = EDIT_ICON_SVG;
             refreshUpstreams();
-            updateRelayDisplay();
-            startStreamInfoPolling();
+            fetchStreamInfo();
         }
 
         function refreshUpstreams() {
@@ -721,12 +728,7 @@
         }
 
         function editRelay() {
-            const origAddr = streamInfo?.orig_dest_addr || streamInfo?.tc_url || '等待推流...';
-            document.getElementById('relay_modal_tcurl').value = streamInfo?.tc_url || '等待推流...';
-            document.getElementById('relay_modal_stream').value = streamInfo?.stream_key || '等待推流...';
-            const customInput = document.getElementById('relay_modal_custom');
-            customInput.value = config.relay_addr || '';
-            customInput.placeholder = origAddr;
+            updateRelay();
             document.getElementById('relayModal').style.display = 'flex';
         }
 
@@ -737,7 +739,7 @@
         function saveRelay() {
             config.relay_addr = document.getElementById('relay_modal_custom').value || '';
             closeRelayModal();
-            updateRelayDisplay();
+            updateRelay();
             save();
         }
 
@@ -791,42 +793,31 @@
             try {
                 const res = await fetch('/api/stream-info');
                 streamInfo = await res.json();
-                updateRelayDisplay();
-                updateRelayModal();
+                updateRelay();
             } catch (e) {
                 console.error('Failed to fetch stream info:', e);
             }
         }
 
-        function updateRelayModal() {
-            const modal = document.getElementById('relayModal');
-            if (modal.style.display === 'flex') {
-                const origAddr = streamInfo?.orig_dest_addr || streamInfo?.tc_url || '等待推流...';
-                document.getElementById('relay_modal_tcurl').value = streamInfo?.tc_url || '等待推流...';
-                document.getElementById('relay_modal_stream').value = streamInfo?.stream_key || '等待推流...';
-                const customInput = document.getElementById('relay_modal_custom');
-                if (!customInput.value || customInput.value === customInput.placeholder) {
-                    customInput.placeholder = origAddr;
-                }
-            }
-        }
-
-        function startStreamInfoPolling() {
-            if (streamInfoInterval) {
-                clearInterval(streamInfoInterval);
-            }
-            fetchStreamInfo();
-            streamInfoInterval = setInterval(fetchStreamInfo, 2000);
-        }
-
-        function updateRelayDisplay() {
+        function updateRelay() {
+            const isPublishing = streamState === 'publishing';
+            const relayAddr = config.relay_addr || '';
+            const origDestAddr = isPublishing ? (streamInfo?.orig_dest_addr || '') : '等待推流...';
+            
+            // 更新首页显示
             const displayInput = document.getElementById('relay_display');
-            const displayText = (streamInfo && (streamInfo.orig_dest_addr || streamInfo.tc_url))
-                ? (config.relay_addr || streamInfo.orig_dest_addr || streamInfo.tc_url)
-                : '等待推流...';
-            displayInput.value = displayText;
-            displayInput.title = displayText;
+            displayInput.value = relayAddr;
+            displayInput.placeholder = origDestAddr;
+            
+            // 更新模态框
+            document.getElementById('relay_modal_tcurl').value = isPublishing ? (streamInfo?.tc_url || '') : '等待推流...';
+            document.getElementById('relay_modal_stream').value = isPublishing ? (streamInfo?.stream_key || '') : '等待推流...';
+            const customInput = document.getElementById('relay_modal_custom');
+            customInput.value = relayAddr;
+            customInput.placeholder = origDestAddr;
         }
+
+
 
         function parseAddr(val) {
             if (!val) return { addr: "", app: null };
