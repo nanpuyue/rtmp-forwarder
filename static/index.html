@@ -161,6 +161,17 @@
             /* Match height for centering text */
         }
 
+        select option {
+            background: #1e293b;
+            color: white;
+            padding: 0.5rem 1rem;
+        }
+
+        select option:hover,
+        select option:checked {
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+        }
+
         input:focus {
             outline: none;
             border-color: var(--primary);
@@ -502,7 +513,24 @@
                 <input type="text" id="relay_modal_custom" placeholder="等待推流...">
             </div>
             <div class="modal-buttons" style="justify-content: flex-end;">
+                <button class="btn btn-save" onclick="showAddToForwarderModal()">添加为推流配置</button>
                 <button class="btn btn-save" onclick="saveRelay()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="addToForwarderModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeAddToForwarderModal()">&times;</span>
+            <div class="modal-title">添加为推流配置</div>
+            <div class="form-group">
+                <label>选择目标</label>
+                <select id="add_forwarder_target">
+                    <option value="-1">新增</option>
+                </select>
+            </div>
+            <div class="modal-buttons" style="justify-content: flex-end;">
+                <button class="btn btn-save" onclick="addRelayToForwarder()">确定</button>
             </div>
         </div>
     </div>
@@ -782,6 +810,56 @@
             config.relay_addr = document.getElementById('relay_modal_custom').value || '';
             closeRelayModal();
             updateRelayDisplay();
+            save();
+        }
+
+        function showAddToForwarderModal() {
+            const tcurl = document.getElementById('relay_modal_tcurl').value;
+            const streamKey = document.getElementById('relay_modal_stream').value;
+
+            if (!tcurl || tcurl === '等待推流...' || !streamKey || streamKey === '等待推流...') {
+                alert('请等待推流成功后再操作');
+                return;
+            }
+
+            const targetSelect = document.getElementById('add_forwarder_target');
+            targetSelect.innerHTML = '<option value="-1">新增</option>';
+            config.forwarders.forEach((f, i) => {
+                let label = f.addr || '';
+                if (label && !label.startsWith('rtmp://')) label = 'rtmp://' + label;
+                targetSelect.innerHTML += `<option value="${i}">覆盖: ${label}</option>`;
+            });
+
+            closeRelayModal();
+            document.getElementById('addToForwarderModal').style.display = 'flex';
+        }
+
+        function closeAddToForwarderModal() {
+            document.getElementById('addToForwarderModal').style.display = 'none';
+        }
+
+        function addRelayToForwarder() {
+            const tcurl = document.getElementById('relay_modal_tcurl').value;
+            const streamKey = document.getElementById('relay_modal_stream').value;
+            const targetIndex = parseInt(document.getElementById('add_forwarder_target').value);
+
+            const parsed = parseAddr(tcurl);
+            const newForwarder = {
+                addr: parsed.addr,
+                app: parsed.app,
+                stream: streamKey,
+                enabled: false
+            };
+
+            if (targetIndex === -1) {
+                config.forwarders.push(newForwarder);
+            } else {
+                config.forwarders[targetIndex] = newForwarder;
+            }
+
+            closeAddToForwarderModal();
+            closeRelayModal();
+            refreshUpstreams();
             save();
         }
 
