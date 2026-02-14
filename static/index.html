@@ -158,7 +158,6 @@
             display: block;
             margin: 0;
             line-height: 40px;
-            /* Match height for centering text */
         }
 
         select option {
@@ -286,7 +285,6 @@
             background: #2563eb;
         }
 
-        /* iOS Switch */
         .switch {
             position: relative;
             display: inline-block;
@@ -362,8 +360,6 @@
                 opacity: 1;
             }
         }
-
-
 
         .modal {
             display: none;
@@ -611,21 +607,13 @@
                 });
 
                 const video = document.getElementById('video');
-
-                // 视频加载前设置初始16:9比例
-                video.style.aspectRatio = '16/9';
-                video.style.objectFit = 'cover';
+                setVideoAspectRatio('16/9'); // 视频加载前设置初始16:9比例
 
                 // 监听视频元数据加载完成事件
                 video.addEventListener('loadedmetadata', function onMetadataLoaded() {
                     video.removeEventListener('loadedmetadata', onMetadataLoaded);
-
-                    // 视频加载后移除固定比例，让视频自适应
-                    video.style.aspectRatio = 'auto';
-                    video.style.objectFit = 'cover';
-
-                    // 根据视频尺寸调整容器
-                    adjustVideoContainer(video);
+                    setVideoAspectRatio('auto'); // 视频加载后移除固定比例，让视频自适应
+                    console.log('Video loaded:', video.videoWidth, 'x', video.videoHeight);
                 });
 
                 player.attachMediaElement(video);
@@ -639,27 +627,26 @@
                 }
 
                 latencyCheckInterval = setInterval(() => {
-                    if (!document.hidden && video.buffered.length > 0 && !video.paused) {
-                        const bufferEnd = video.buffered.end(0);
-                        const currentTime = video.currentTime;
-                        const latency = bufferEnd - currentTime;
+                    if (document.hidden || video.buffered.length === 0 || video.paused) return;
 
-                        // 混合策略：延迟大时跳帧，延迟小时变速
-                        if (latency > 2.0) {
-                            // 延迟过大，直接跳到最新位置
-                            video.currentTime = bufferEnd - 0.3;
-                            video.playbackRate = 1.0;
-                            console.log(`Jump: latency ${latency.toFixed(2)}s`);
-                        } else if (latency > targetLatency + 0.5) {
-                            // 中等延迟，加速播放
-                            video.playbackRate = 1.2;
-                        } else if (latency < targetLatency - 0.2) {
-                            // 延迟过小，减速播放
-                            video.playbackRate = 0.95;
-                        } else {
-                            // 延迟正常，正常播放
-                            video.playbackRate = 1.0;
-                        }
+                    const bufferEnd = video.buffered.end(0);
+                    const latency = bufferEnd - video.currentTime;
+
+                    // 混合策略：延迟大时跳帧，延迟小时变速
+                    if (latency > 2.0) {
+                        // 延迟过大，直接跳到最新位置
+                        video.currentTime = bufferEnd - 0.3;
+                        video.playbackRate = 1.0;
+                        console.log(`Jump: latency ${latency.toFixed(2)}s`);
+                    } else if (latency > targetLatency + 0.5) {
+                        // 中等延迟，加速播放
+                        video.playbackRate = 1.2;
+                    } else if (latency < targetLatency - 0.2) {
+                        // 延迟过小，减速播放
+                        video.playbackRate = 0.95;
+                    } else {
+                        // 延迟正常，正常播放
+                        video.playbackRate = 1.0;
                     }
                 }, 500);
 
@@ -682,13 +669,14 @@
                 player = null;
             }
             isPlaying = false;
-
-            // 重置视频元素样式，确保下次播放时能正确应用16:9比例
-            const video = document.getElementById('video');
-            video.style.aspectRatio = '16/9';
-            video.style.objectFit = 'cover';
+            setVideoAspectRatio('16/9'); // 重置视频元素样式，确保下次播放时能正确应用16:9比例
         }
 
+        const setVideoAspectRatio = (ratio) => {
+            const video = document.getElementById('video');
+            video.style.aspectRatio = ratio;
+            video.style.objectFit = 'cover';
+        };
 
         let config = {};
         let editingIndex = -1;
@@ -703,33 +691,20 @@
 
         // 监听页面可见性变化
         document.addEventListener('visibilitychange', () => {
-            if (document.hidden) {
-                console.log('Page hidden');
-            } else {
+            if (!document.hidden) {
                 console.log('Page visible, jumping to live edge');
                 const video = document.getElementById('video');
-                if (video && video.buffered.length > 0) {
+                if (video?.buffered.length > 0) {
                     video.currentTime = video.buffered.end(0) - 0.1;
-                    if (video.paused) {
-                        video.play();
-                    }
+                    if (video.paused) video.play();
                 }
             }
         });
 
-        function adjustVideoContainer(video) {
-            // 视频加载后已经移除了固定比例，让视频自适应
-            // 现在视频直接在left-panel中，会根据left-panel的宽度自适应
-            console.log('Video loaded with dimensions:', video.videoWidth, 'x', video.videoHeight);
-        }
-
         async function load() {
-            const res = await fetch('/api/config');
-            config = await res.json();
-
+            config = await (await fetch('/api/config')).json();
             document.getElementById('relay_enabled').checked = config.relay_enabled;
             document.getElementById('relay-edit-btn').innerHTML = EDIT_ICON_SVG;
-
             refreshUpstreams();
             updateRelayDisplay();
             startStreamInfoPolling();
@@ -737,18 +712,18 @@
 
         function refreshUpstreams() {
             const container = document.getElementById('upstreams-container');
-            container.innerHTML = "";
-            config.forwarders.forEach((u, i) => addUpstreamUI(u, i));
+            container.innerHTML = '';
+            config.forwarders.forEach(addUpstreamUI);
         }
 
+        const formatRtmpUrl = (addr) => addr && !addr.startsWith('rtmp://') ? 'rtmp://' + addr : addr || '';
+
+        // 添加推流目标UI
         function addUpstreamUI(u, index) {
             const container = document.getElementById('upstreams-container');
             const div = document.createElement('div');
             div.className = 'upstream-item';
-
-            let host = u.addr || '';
-            if (host && !host.startsWith("rtmp://")) host = "rtmp://" + host;
-
+            const host = formatRtmpUrl(u.addr);
             div.innerHTML = `
                 <input type="text" value="${host}" title="${host}" readonly>
                 <label class="switch">
@@ -762,10 +737,11 @@
             container.appendChild(div);
         }
 
+        // 添加新推流目标
         function addUpstream() {
             editingIndex = -1; // 标记为新建模式
-            document.getElementById('modal_addr').value = "";
-            document.getElementById('modal_stream').value = "";
+            document.getElementById('modal_addr').value = '';
+            document.getElementById('modal_stream').value = '';
             document.getElementById('editModal').style.display = 'flex';
         }
 
@@ -774,14 +750,12 @@
             save();
         }
 
+        // 编辑推流目标
         function editUpstream(index) {
-            editingIndex = index;
+            editingIndex = index; // 标记为编辑模式
             const u = config.forwarders[index];
-
-            let base = u.addr || '';
-            if (base && !base.startsWith("rtmp://")) base = "rtmp://" + base;
-            if (u.app) base += "/" + u.app;
-
+            let base = formatRtmpUrl(u.addr);
+            if (u.app) base += '/' + u.app;
             document.getElementById('modal_addr').value = base;
             document.getElementById('modal_stream').value = u.stream || '';
             document.getElementById('editModal').style.display = 'flex';
@@ -823,12 +797,8 @@
             }
 
             const targetSelect = document.getElementById('add_forwarder_target');
-            targetSelect.innerHTML = '<option value="-1">新增</option>';
-            config.forwarders.forEach((f, i) => {
-                let label = f.addr || '';
-                if (label && !label.startsWith('rtmp://')) label = 'rtmp://' + label;
-                targetSelect.innerHTML += `<option value="${i}">覆盖: ${label}</option>`;
-            });
+            targetSelect.innerHTML = '<option value="-1">新增</option>' +
+                config.forwarders.map((f, i) => `<option value="${i}">覆盖: ${formatRtmpUrl(f.addr)}</option>`).join('');
 
             closeRelayModal();
             document.getElementById('addToForwarderModal').style.display = 'flex';
@@ -897,21 +867,11 @@
 
         function updateRelayDisplay() {
             const displayInput = document.getElementById('relay_display');
-            if (streamInfo && (streamInfo.orig_dest_addr || streamInfo.tc_url)) {
-                let displayText = '';
-                if (config.relay_addr) {
-                    displayText = config.relay_addr;
-                } else if (streamInfo.orig_dest_addr) {
-                    displayText = streamInfo.orig_dest_addr;
-                } else if (streamInfo.tc_url) {
-                    displayText = streamInfo.tc_url;
-                }
-                displayInput.value = displayText;
-                displayInput.title = displayText;
-            } else {
-                displayInput.value = '等待推流...';
-                displayInput.title = '等待推流...';
-            }
+            const displayText = (streamInfo && (streamInfo.orig_dest_addr || streamInfo.tc_url))
+                ? (config.relay_addr || streamInfo.orig_dest_addr || streamInfo.tc_url)
+                : '等待推流...';
+            displayInput.value = displayText;
+            displayInput.title = displayText;
         }
 
         function parseAddr(val) {
@@ -949,32 +909,20 @@
             return { addr: host, app: app || null, stream: stream || null };
         }
 
+        // 保存推流目标
         function saveUpstream() {
             const addrVal = document.getElementById('modal_addr').value;
             const streamVal = document.getElementById('modal_stream').value;
-
-            let addr, app, stream;
-
-            if (!streamVal) {
-                const parsed = parseFullRtmpUrl(addrVal);
-                addr = parsed.addr;
-                app = parsed.app;
-                stream = parsed.stream;
-            } else {
-                const parsed = parseAddr(addrVal);
-                addr = parsed.addr;
-                app = parsed.app;
-                stream = streamVal;
-            }
+            const parsed = streamVal ? parseAddr(addrVal) : parseFullRtmpUrl(addrVal);
+            const { addr, app } = parsed;
+            const stream = streamVal || parsed.stream;
 
             if (editingIndex === -1) {
                 // 新建模式：添加到配置中
                 config.forwarders.push({ addr, app, stream, enabled: false });
             } else {
                 // 编辑模式：更新现有配置
-                config.forwarders[editingIndex].addr = addr;
-                config.forwarders[editingIndex].app = app;
-                config.forwarders[editingIndex].stream = stream;
+                Object.assign(config.forwarders[editingIndex], { addr, app, stream });
             }
 
             closeModal();
@@ -982,19 +930,25 @@
             save();
         }
 
+        // 删除推流目标
         function deleteUpstream() {
             if (editingIndex === -1) {
                 // 新建模式：直接关闭，不保存
                 closeModal();
                 return;
             }
-
             // 编辑模式：删除现有配置
             config.forwarders.splice(editingIndex, 1);
             closeModal();
             refreshUpstreams();
             save();
         }
+
+        const showToast = () => {
+            const toast = document.getElementById('toast');
+            toast.style.display = 'block';
+            setTimeout(() => toast.style.display = 'none', 2000);
+        };
 
         async function save() {
             const updated = {
@@ -1012,9 +966,7 @@
             if (res.ok) {
                 config.relay_addr = updated.relay_addr;
                 config.relay_enabled = updated.relay_enabled;
-                const toast = document.getElementById('toast');
-                toast.style.display = 'block';
-                setTimeout(() => toast.style.display = 'none', 2000);
+                showToast();
             }
         }
 
