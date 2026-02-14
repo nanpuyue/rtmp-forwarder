@@ -133,7 +133,7 @@ async fn main() -> Result<()> {
     let shared_config = Arc::new(RwLock::new(app_config));
 
     // 3. Create stream manager
-    let stream_manager = Arc::new(StreamManager::new());
+    let stream_manager = StreamManager::new();
 
     // 4. Create forwarder manager
     let initial_forwarders = {

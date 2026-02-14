@@ -1,7 +1,9 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::sync::{RwLock, broadcast};
+use tokio::time;
+use tracing::warn;
 
 use crate::rtmp::RtmpMessage;
 
@@ -72,12 +74,50 @@ pub struct StreamManager {
     pub message_tx: broadcast::Sender<StreamMessage>,
 }
 
+const STREAM_TIMEOUT: Duration = Duration::from_secs(10);
+const CHECK_INTERVAL: Duration = Duration::from_secs(3);
+
 impl StreamManager {
-    pub fn new() -> Self {
+    pub fn new() -> Arc<Self> {
         let (msg_tx, _) = broadcast::channel(1024);
-        Self {
+        let manager = Arc::new(Self {
             default_stream: Arc::new(RwLock::new(None)),
             message_tx: msg_tx,
+        });
+
+        let manager_clone = manager.clone();
+        tokio::spawn(async move {
+            manager_clone.check_stream_timeout().await;
+        });
+
+        manager
+    }
+
+    async fn check_stream_timeout(&self) {
+        let mut interval = time::interval(CHECK_INTERVAL);
+        loop {
+            interval.tick().await;
+
+            let should_release = {
+                let stream = self.default_stream.read().await;
+                stream
+                    .as_ref()
+                    .map(|s| s.last_active.elapsed() > STREAM_TIMEOUT)
+                    .unwrap_or_default()
+            };
+
+            if should_release {
+                warn!(
+                    "Stream timeout after {}s, releasing",
+                    STREAM_TIMEOUT.as_secs()
+                );
+                let mut stream = self.default_stream.write().await;
+                stream.take();
+                drop(stream);
+                self.message_tx
+                    .send(StreamMessage::StateChanged(StreamEvent::Closed))
+                    .ok();
+            }
         }
     }
 
