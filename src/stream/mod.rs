@@ -60,6 +60,7 @@ pub struct StreamInfo {
     pub video_seq_hdr: Option<RtmpMessage>,
     pub audio_seq_hdr: Option<RtmpMessage>,
     pub orig_dest_addr: Option<String>,
+    pub message_tx: broadcast::Sender<StreamMessage>,
 }
 
 #[derive(Debug)]
@@ -296,13 +297,7 @@ impl StreamManager {
         }
 
         let mut stream = self.default_stream.write().await;
-        if stream.as_mut().is_some() {
-            drop(stream.take())
-        }
-        drop(stream);
-        self.message_tx
-            .send(StreamMessage::StateChanged(StreamEvent::Deleted))
-            .ok();
+        drop(stream.take());
         Ok(())
     }
 
@@ -313,14 +308,14 @@ impl StreamManager {
         }
 
         let mut stream = self.default_stream.write().await;
-        if stream.as_mut().is_some() {
-            drop(stream.take())
-        }
-        drop(stream);
-        if state.1 != StreamState::None {
-            self.message_tx
-                .send(StreamMessage::StateChanged(StreamEvent::Closed))
-                .ok();
-        }
+        drop(stream.take());
+    }
+}
+
+impl Drop for StreamInfo {
+    fn drop(&mut self) {
+        self.message_tx
+            .send(StreamMessage::StateChanged(StreamEvent::Deleted))
+            .ok();
     }
 }

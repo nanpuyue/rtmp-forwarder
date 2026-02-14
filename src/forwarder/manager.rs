@@ -33,7 +33,7 @@ impl ForwarderManager {
                 stream_manager,
                 config: Arc::new(RwLock::new(initial_config)),
                 command_rx: cmd_rx,
-                event_tx: event_tx.clone(),
+                event_tx,
                 running_configs: Vec::new(),
             },
             cmd_tx,

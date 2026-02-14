@@ -56,6 +56,7 @@ pub async fn handle_client(
         video_seq_hdr: None,
         audio_seq_hdr: None,
         orig_dest_addr,
+        message_tx: stream_manager.message_tx.clone(),
     });
 
     let (client_rx, mut client_tx) = client.into_split();
