@@ -38,7 +38,7 @@ pub async fn start_web_server(
     let addr: SocketAddr = web_config
         .addr
         .parse()
-        .unwrap_or(([0, 0, 0, 0], 8080).into());
+        .unwrap_or(([127, 0, 0, 1], 8080).into());
 
     let mut app = Router::new()
         .route("/api/config", get(get_config))

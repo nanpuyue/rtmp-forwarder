@@ -63,7 +63,7 @@ pub struct WebServerConfig {
 impl Default for WebServerConfig {
     fn default() -> Self {
         Self {
-            addr: "0.0.0.0:8080".to_string(),
+            addr: "127.0.0.1:8080".to_string(),
             username: None,
             password: None,
         }
