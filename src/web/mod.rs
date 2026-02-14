@@ -43,6 +43,7 @@ pub async fn start_web_server(
     let mut app = Router::new()
         .route("/api/config", get(get_config))
         .route("/api/config", post(update_config))
+        .route("/api/stream-info", get(get_stream_info))
         .route("/live/stream.flv", get(handle_flv_stream))
         .route("/ws/stream-status", get(ws_handler))
         .fallback(static_handler)
@@ -101,6 +102,26 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
 async fn get_config(Extension(config): Extension<SharedConfig>) -> Json<WebConfig> {
     let c = config.read().unwrap();
     Json(WebConfig::from(&*c))
+}
+
+async fn get_stream_info(
+    Extension(stream_manager): Extension<Arc<StreamManager>>,
+) -> Json<serde_json::Value> {
+    if let Some(snapshot) = stream_manager.get_stream_snapshot().await {
+        Json(json!({
+            "tc_url": snapshot.tc_url,
+            "app_name": snapshot.app_name,
+            "stream_key": snapshot.stream_key,
+            "orig_dest_addr": snapshot.orig_dest_addr,
+        }))
+    } else {
+        Json(json!({
+            "tc_url": null,
+            "app_name": null,
+            "stream_key": null,
+            "orig_dest_addr": null,
+        }))
+    }
 }
 
 async fn update_config(

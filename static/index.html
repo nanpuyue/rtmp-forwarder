@@ -448,20 +448,21 @@
                     </div>
 
                     <div class="section">
-                        <span class="section-title">原址中继</span>
-                        <div class="upstream-item" style="align-items: center;">
-                            <input type="text" id="relay_addr" placeholder="留空自动获取（仅限 Linux 部署）">
-                            <label class="switch">
-                                <input type="checkbox" id="relay_enabled" onchange="save()">
-                                <span class="slider"></span>
-                            </label>
-                            <button class="btn btn-icon" onclick="save()" title="保存">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-                                    <polyline points="17 21 17 13 7 13 7 21"></polyline>
-                                    <polyline points="7 3 7 8 15 8"></polyline>
-                                </svg>
-                            </button>
+                        <span class="section-title">中继配置</span>
+                        <div id="relay-container">
+                            <div class="upstream-item" style="align-items: center;">
+                                <input type="text" id="relay_display" placeholder="等待推流..." readonly>
+                                <label class="switch">
+                                    <input type="checkbox" id="relay_enabled" onchange="save()">
+                                    <span class="slider"></span>
+                                </label>
+                                <button class="btn btn-icon" onclick="editRelay()" title="编辑">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -484,6 +485,28 @@
             <div class="modal-buttons" style="justify-content: flex-end;">
                 <button class="btn btn-remove" onclick="deleteUpstream()">删除</button>
                 <button class="btn btn-save" onclick="saveUpstream()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="relayModal" class="modal">
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeRelayModal()">&times;</span>
+            <div class="modal-title">编辑中继配置</div>
+            <div class="form-group">
+                <label>推流地址</label>
+                <input type="text" id="relay_modal_tcurl" placeholder="等待推流..." readonly>
+            </div>
+            <div class="form-group">
+                <label>推流码</label>
+                <input type="text" id="relay_modal_stream" placeholder="等待推流..." readonly>
+            </div>
+            <div class="form-group">
+                <label>中继地址</label>
+                <input type="text" id="relay_modal_custom" placeholder="等待推流...">
+            </div>
+            <div class="modal-buttons" style="justify-content: flex-end;">
+                <button class="btn btn-save" onclick="saveRelay()">保存</button>
             </div>
         </div>
     </div>
@@ -646,6 +669,8 @@
         let config = {};
         let editingIndex = -1;
         let latencyCheckInterval = null;
+        let streamInfo = null;
+        let streamInfoInterval = null;
 
         // 监听页面可见性变化
         document.addEventListener('visibilitychange', () => {
@@ -673,10 +698,11 @@
             const res = await fetch('/api/config');
             config = await res.json();
 
-            document.getElementById('relay_addr').value = config.relay_addr || "";
             document.getElementById('relay_enabled').checked = config.relay_enabled;
 
             refreshUpstreams();
+            updateRelayDisplay();
+            startStreamInfoPolling();
         }
 
         function refreshUpstreams() {
@@ -737,6 +763,78 @@
         function closeModal() {
             document.getElementById('editModal').style.display = 'none';
             editingIndex = -1;
+        }
+
+        function editRelay() {
+            const origAddr = streamInfo?.orig_dest_addr || streamInfo?.tc_url || '等待推流...';
+            document.getElementById('relay_modal_tcurl').value = streamInfo?.tc_url || '等待推流...';
+            document.getElementById('relay_modal_stream').value = streamInfo?.stream_key || '等待推流...';
+            const customInput = document.getElementById('relay_modal_custom');
+            customInput.value = config.relay_addr || '';
+            customInput.placeholder = origAddr;
+            document.getElementById('relayModal').style.display = 'flex';
+        }
+
+        function closeRelayModal() {
+            document.getElementById('relayModal').style.display = 'none';
+        }
+
+        function saveRelay() {
+            config.relay_addr = document.getElementById('relay_modal_custom').value || '';
+            closeRelayModal();
+            updateRelayDisplay();
+            save();
+        }
+
+        async function fetchStreamInfo() {
+            try {
+                const res = await fetch('/api/stream-info');
+                streamInfo = await res.json();
+                updateRelayDisplay();
+                updateRelayModal();
+            } catch (e) {
+                console.error('Failed to fetch stream info:', e);
+            }
+        }
+
+        function updateRelayModal() {
+            const modal = document.getElementById('relayModal');
+            if (modal.style.display === 'flex') {
+                const origAddr = streamInfo?.orig_dest_addr || streamInfo?.tc_url || '等待推流...';
+                document.getElementById('relay_modal_tcurl').value = streamInfo?.tc_url || '等待推流...';
+                document.getElementById('relay_modal_stream').value = streamInfo?.stream_key || '等待推流...';
+                const customInput = document.getElementById('relay_modal_custom');
+                if (!customInput.value || customInput.value === customInput.placeholder) {
+                    customInput.placeholder = origAddr;
+                }
+            }
+        }
+
+        function startStreamInfoPolling() {
+            if (streamInfoInterval) {
+                clearInterval(streamInfoInterval);
+            }
+            fetchStreamInfo();
+            streamInfoInterval = setInterval(fetchStreamInfo, 2000);
+        }
+
+        function updateRelayDisplay() {
+            const displayInput = document.getElementById('relay_display');
+            if (streamInfo && (streamInfo.orig_dest_addr || streamInfo.tc_url)) {
+                let displayText = '';
+                if (config.relay_addr) {
+                    displayText = config.relay_addr;
+                } else if (streamInfo.orig_dest_addr) {
+                    displayText = streamInfo.orig_dest_addr;
+                } else if (streamInfo.tc_url) {
+                    displayText = streamInfo.tc_url;
+                }
+                displayInput.value = displayText;
+                displayInput.title = displayText;
+            } else {
+                displayInput.value = '等待推流...';
+                displayInput.title = '等待推流...';
+            }
         }
 
         function parseAddr(val) {
@@ -823,12 +921,9 @@
 
         async function save() {
             const updated = {
-                listen_addr: config.listen_addr,
-                log_level: config.log_level,
-                relay_addr: document.getElementById('relay_addr').value || "",
+                relay_addr: config.relay_addr || "",
                 relay_enabled: document.getElementById('relay_enabled').checked,
                 forwarders: config.forwarders,
-                web_addr: config.web_addr
             };
 
             const res = await fetch('/api/config', {
@@ -838,7 +933,8 @@
             });
 
             if (res.ok) {
-                config = updated;
+                config.relay_addr = updated.relay_addr;
+                config.relay_enabled = updated.relay_enabled;
                 const toast = document.getElementById('toast');
                 toast.style.display = 'block';
                 setTimeout(() => toast.style.display = 'none', 2000);
