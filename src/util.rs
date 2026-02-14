@@ -58,11 +58,7 @@ pub async fn try_handle_socks5(stream: &mut TcpStream) -> Result<Option<String>>
     stream.read_exact(&mut port).await?;
     let port = u16::from_be_bytes(port);
 
-    let full_addr = if port == 1935 {
-        dest_addr
-    } else {
-        format!("{}:{}", dest_addr, port)
-    };
+    let full_addr = format!("{}:{}", dest_addr, port);
     info!("SOCKS5 target: {}", full_addr);
 
     stream.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await?;

@@ -25,7 +25,15 @@ pub async fn handle_client(
 
     let orig_dest_addr = try_handle_socks5(&mut client)
         .await?
-        .or_else(|| get_original_destination(&client).ok());
+        .or_else(|| get_original_destination(&client).ok())
+        .map(|addr| {
+            // 省略默认端口 1935
+            if let Some(host) = addr.strip_suffix(":1935") {
+                host.to_string()
+            } else {
+                addr
+            }
+        });
     if let Some(addr) = &orig_dest_addr {
         info!("Captured original destination address: {addr}",);
     }
