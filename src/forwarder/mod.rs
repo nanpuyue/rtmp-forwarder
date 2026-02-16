@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
+use futures_util::sink::SinkExt;
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpStream, tcp};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc::Receiver;
@@ -8,13 +10,14 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
+use tokio_util::codec::{Encoder, FramedWrite};
 use tracing::{debug, error, info, warn};
 
 use crate::config::ForwarderConfig;
 use crate::error::Result;
 use crate::rtmp::handshake_with_server;
-use crate::rtmp::{RtmpCommand, RtmpMessage, RtmpMessageStream};
-use crate::rtmp::{write_rtmp_message, write_rtmp_message2};
+use crate::rtmp::write_rtmp_message2;
+use crate::rtmp::{RtmpCodec, RtmpCommand, RtmpMessage, RtmpMessageStream};
 
 pub use self::manager::{ForwarderManager, ForwarderManagerCommand};
 
@@ -40,7 +43,7 @@ pub enum ForwardEvent {
 
 /// Retry state for connection attempts
 struct ConnectionState {
-    conn: Option<tcp::OwnedWriteHalf>,
+    conn: Option<FramedWrite<tcp::OwnedWriteHalf, RtmpCodec>>,
     failure: u32,
     last_attempt: Instant,
 }
@@ -85,15 +88,28 @@ pub struct Forwarder {
     pub config: ForwarderConfig,
     pub rx: broadcast::Receiver<ForwardEvent>,
     pub snapshot: ProtocolSnapshot,
+    pub codec: RtmpCodec,
 }
 
 impl Forwarder {
+    fn failure_reached(&self, s: &mut ConnectionState) -> bool {
+        s.failure += 1;
+        let reached = s.failure >= MAX_FAILURE;
+        if reached {
+            warn!(
+                "#{} [{}] Failed {} times, giving up",
+                self.index, self.config.addr, s.failure
+            )
+        }
+        reached
+    }
+
     /// Main loop for the forwarder task.
     pub async fn run(mut self) {
         info!("#{} [{}] started", self.index, self.config.addr);
         let mut state = ConnectionState::new();
 
-        loop {
+        while state.failure < MAX_FAILURE {
             let event = match self.rx.recv().await {
                 Ok(x) => x,
                 Err(RecvError::Lagged(n)) => {
@@ -120,6 +136,14 @@ impl Forwarder {
                         continue;
                     }
 
+                    let mut chunk_size_changed = false;
+                    if msg.header().msg_type == 1 && msg.header().msg_len >= 4 {
+                        self.chunk_size =
+                            u32::from_be_bytes(msg.payload()[..4].try_into().unwrap()) as usize;
+                        self.codec.set_chunk_size(self.chunk_size);
+                        chunk_size_changed = true;
+                    };
+
                     // Try to establish connection with retry logic
                     if state.conn.is_none() && state.can_attempt() {
                         state.last_attempt = Instant::now();
@@ -136,55 +160,46 @@ impl Forwarder {
                             );
                             state.conn = Some(conn);
                         } else {
-                            state.failure += 1;
-                            if state.failure >= MAX_FAILURE {
-                                warn!(
-                                    "[{}] Failed {} times, giving up",
-                                    self.config.addr, state.failure
-                                );
+                            if self.failure_reached(&mut state) {
                                 break;
                             }
                         }
                     }
 
                     // Forward media data if connected
-                    if let Some(ref mut w) = state.conn {
+                    if state.conn.is_some() {
                         msg.set_stream_id(self.stream_id);
-                        if let Err(e) = write_rtmp_message(w, &msg, self.chunk_size).await {
-                            error!("[{}] Write error: {}", self.config.addr, e);
+                        let framed = state.conn.as_mut().unwrap();
+                        if let Err(e) = framed.send(msg).await {
+                            warn!(
+                                "#{} [{}] send error: {}, dropping connection",
+                                self.index, self.config.addr, e
+                            );
                             state.conn = None;
-                            state.failure += 1;
-                            if state.failure >= MAX_FAILURE {
-                                warn!(
-                                    "[{}] Failed {} times, giving up",
-                                    self.config.addr, state.failure
-                                );
+                            if self.failure_reached(&mut state) {
                                 break;
                             }
+                        } else if chunk_size_changed {
+                            framed.encoder_mut().set_chunk_size(self.chunk_size);
                         }
-
-                        // Sync output chunk size if destination requests change (via SetChunkSize)
-                        if msg.header().msg_type == 1 && msg.header().msg_len >= 4 {
-                            self.chunk_size =
-                                u32::from_be_bytes(msg.payload()[..4].try_into().unwrap()) as usize;
-                        }
-                    }
+                    };
                 }
                 ForwardEvent::Shutdown(index) => {
                     if index == self.index {
-                        if let Some(ref mut w) = state.conn {
-                            self.shutdown(w).await;
+                        if let Some(ref mut framed) = state.conn {
+                            self.shutdown(framed).await;
                         }
                         break;
                     }
                 }
             }
         }
+
         info!("Forwarder [{}] stopped", self.config.addr);
     }
 
     /// Attempt to connect and perform RTMP handshake + setup.
-    async fn try_connect(&mut self) -> Option<tcp::OwnedWriteHalf> {
+    async fn try_connect(&mut self) -> Option<FramedWrite<tcp::OwnedWriteHalf, RtmpCodec>> {
         let mut addr = self.config.addr.clone();
         if !addr.contains(':') {
             addr.push_str(":1935");
@@ -204,7 +219,9 @@ impl Forwarder {
 
                 // Perform RTMP command sequence (Connect -> Publish)
                 if self.setup_protocol(&mut w, response_rx).await.is_ok() {
-                    return Some(w);
+                    // 创建 FramedWrite
+                    let framed = FramedWrite::new(w, self.codec.clone());
+                    return Some(framed);
                 }
             }
         }
@@ -358,7 +375,10 @@ impl Forwarder {
         {
             let m = &mut m.clone();
             m.set_stream_id(self.stream_id);
-            write_rtmp_message(w, m, self.chunk_size).await?;
+
+            let mut buf = BytesMut::new();
+            self.codec.encode(m.clone(), &mut buf)?;
+            w.write_all(&buf).await?;
         }
         Ok(())
     }
@@ -443,7 +463,7 @@ impl Forwarder {
         Ok(())
     }
 
-    async fn shutdown(&self, w: &mut tcp::OwnedWriteHalf) {
+    async fn shutdown(&self, framed: &mut FramedWrite<tcp::OwnedWriteHalf, RtmpCodec>) {
         if let (Some(_app), Some(stream)) = (
             self.config
                 .app
@@ -457,12 +477,12 @@ impl Forwarder {
             info!("#{} [{}] shutdown", self.index, self.config.addr);
 
             RtmpCommand::fc_unpublish(6.0, stream)
-                .send(w, 3, self.stream_id, self.chunk_size)
+                .send(framed.get_mut(), 3, self.stream_id, self.chunk_size)
                 .await
                 .ok();
 
             RtmpCommand::delete_stream(7.0, self.stream_id as f64)
-                .send(w, 3, self.stream_id, self.chunk_size)
+                .send(framed.get_mut(), 3, self.stream_id, self.chunk_size)
                 .await
                 .ok();
         }

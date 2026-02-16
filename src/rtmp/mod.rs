@@ -7,7 +7,7 @@ use crate::error::Context;
 use crate::error::Result;
 
 pub use self::amf::RtmpCommand;
-pub use self::codec::{RtmpMessage, RtmpMessageStream};
+pub use self::codec::{RtmpMessage, RtmpMessageStream, RtmpCodec};
 pub use self::handshake::{handshake_with_client, handshake_with_server};
 
 mod amf;

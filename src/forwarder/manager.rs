@@ -6,6 +6,7 @@ use tracing::{info, warn};
 use crate::config::ForwarderConfig;
 use crate::forwarder::{ForwardEvent, Forwarder};
 use crate::rtmp::RtmpMessage;
+use crate::rtmp::RtmpCodec;
 use crate::stream::{StreamEvent, StreamManager, StreamMessage, StreamSnapshot, StreamState};
 
 pub enum ForwarderManagerCommand {
@@ -116,6 +117,7 @@ impl ForwarderManager {
                 client_app: snapshot.app_name,
                 client_stream: snapshot.stream_key,
             },
+            codec: RtmpCodec::new(chunk_size),
         };
 
         tokio::spawn(forwarder.run());
