@@ -282,6 +282,121 @@ impl Encoder<RtmpChunk> for RtmpCodec {
     }
 }
 
+impl Encoder<RtmpMessage> for RtmpCodec {
+    type Error = io::Error;
+
+    fn encode(&mut self, msg: RtmpMessage, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let csid = msg.csid as usize;
+        let payload = msg.payload();
+
+        // 按FFmpeg逻辑选择format
+        let (first_fmt, ts_value, ts_field) = if let Some(last) = &self.last_headers[csid] {
+            let use_delta = last.stream_id == msg.header.stream_id
+                && msg.header.timestamp >= last.timestamp.absolute;
+
+            let timestamp = if use_delta {
+                msg.header.timestamp.wrapping_sub(last.timestamp.absolute)
+            } else {
+                msg.header.timestamp
+            };
+
+            let ts_field = if timestamp >= 0xFFFFFF {
+                0xFFFFFF
+            } else {
+                timestamp
+            };
+
+            let fmt = if !use_delta {
+                0
+            } else if last.msg_type != msg.header.msg_type || last.msg_len != msg.header.msg_len {
+                1
+            } else if !last.timestamp.delta || ts_field != last.timestamp.raw {
+                // 只有上次也是增量时间戳，且ts_field相同，才能用fmt 3
+                // 这比FFmpeg更严格，但兼容性更好
+                2
+            } else {
+                3
+            };
+
+            (fmt, timestamp, ts_field)
+        } else {
+            let ts_field = if msg.header.timestamp >= 0xFFFFFF {
+                0xFFFFFF
+            } else {
+                msg.header.timestamp
+            };
+            (0, msg.header.timestamp, ts_field)
+        };
+
+        let need_ext_ts = ts_field == 0xFFFFFF;
+
+        let mut offset = 0;
+        while offset < payload.len() {
+            let payload_len = self.chunk_size.min(payload.len() - offset);
+            let fmt = if offset == 0 { first_fmt } else { 3 };
+
+            // Basic Header
+            dst.put_u8((fmt << 6) | (csid as u8 & 0x3f));
+
+            // Message Header
+            match fmt {
+                0 => {
+                    dst.put_u24(ts_field);
+                    dst.put_u24(msg.header.msg_len as u32);
+                    dst.put_u8(msg.header.msg_type);
+                    dst.put_u32_le(msg.header.stream_id);
+                }
+                1 => {
+                    dst.put_u24(ts_field);
+                    dst.put_u24(msg.header.msg_len as u32);
+                    dst.put_u8(msg.header.msg_type);
+                }
+                2 => {
+                    dst.put_u24(ts_field);
+                }
+                3 => {}
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Invalid chunk format: {}", fmt),
+                    ));
+                }
+            }
+
+            // Extended Timestamp
+            if need_ext_ts {
+                dst.put_u32(ts_value);
+            }
+
+            // Chunk Data
+            dst.extend_from_slice(&payload[offset..offset + payload_len]);
+            offset += payload_len;
+        }
+
+        // 更新last_headers供下次比较
+        // 我们的实现约定: fmt 0 = 绝对时间戳, fmt 1/2/3 = 增量时间戳
+        // 这个约定确保了对任何符合协议的解码器的兼容性:
+        //   - fmt 0 输出绝对时间戳，解码器将其作为基准
+        //   - fmt 1/2 输出增量时间戳，解码器将其累加
+        //   - fmt 3 不输出时间戳，解码器复用上次的增量
+        // 我们的 fmt 选择逻辑保证了不会在 fmt 0 后的下条消息首 chunk 使用 fmt 3，避免混淆绝对值和增量
+        self.last_headers[csid] = Some(RtmpChunkHeader {
+            fmt: first_fmt,
+            csid,
+            timestamp: RtmpChunkTimestamp {
+                delta: first_fmt != 0,          // fmt 0 → 绝对, 其他 → 增量
+                raw: ts_field,                  // 记录写入的ts_field值
+                absolute: msg.header.timestamp, // 记录绝对时间戳用于计算下次增量
+            },
+            msg_len: msg.header.msg_len,
+            msg_type: msg.header.msg_type,
+            stream_id: msg.header.stream_id,
+        });
+
+        Ok(())
+    }
+}
+
 impl<S: AsyncRead + Unpin> RtmpMessageStream<S> {
     pub fn new(s: S, chunk_size: usize) -> Self {
         let codec = RtmpCodec::new(chunk_size);
