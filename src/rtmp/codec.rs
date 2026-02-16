@@ -109,10 +109,9 @@ impl RtmpMessage {
     }
 }
 
-pub struct RtmpMessageIter {
+pub struct RtmpMessageIter<'a> {
+    codec: &'a mut RtmpCodec,
     csid: usize,
-    first: bool,
-    chunk_size: usize,
     header: RtmpMessageHeader,
     payload: BytesMut,
 }
@@ -286,113 +285,9 @@ impl Encoder<RtmpMessage> for RtmpCodec {
     type Error = io::Error;
 
     fn encode(&mut self, msg: RtmpMessage, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let csid = msg.csid as usize;
-        let payload = msg.payload();
-
-        // 按FFmpeg逻辑选择format
-        let (first_fmt, ts_value, ts_field) = if let Some(last) = &self.last_headers[csid] {
-            let use_delta = last.stream_id == msg.header.stream_id
-                && msg.header.timestamp >= last.timestamp.absolute;
-
-            let timestamp = if use_delta {
-                msg.header.timestamp.wrapping_sub(last.timestamp.absolute)
-            } else {
-                msg.header.timestamp
-            };
-
-            let ts_field = if timestamp >= 0xFFFFFF {
-                0xFFFFFF
-            } else {
-                timestamp
-            };
-
-            let fmt = if !use_delta {
-                0
-            } else if last.msg_type != msg.header.msg_type || last.msg_len != msg.header.msg_len {
-                1
-            } else if !last.timestamp.delta || ts_field != last.timestamp.raw {
-                // 只有上次也是增量时间戳，且ts_field相同，才能用fmt 3
-                // 这比FFmpeg更严格，但兼容性更好
-                2
-            } else {
-                3
-            };
-
-            (fmt, timestamp, ts_field)
-        } else {
-            let ts_field = if msg.header.timestamp >= 0xFFFFFF {
-                0xFFFFFF
-            } else {
-                msg.header.timestamp
-            };
-            (0, msg.header.timestamp, ts_field)
-        };
-
-        let need_ext_ts = ts_field == 0xFFFFFF;
-
-        let mut offset = 0;
-        while offset < payload.len() {
-            let payload_len = self.chunk_size.min(payload.len() - offset);
-            let fmt = if offset == 0 { first_fmt } else { 3 };
-
-            // Basic Header
-            dst.put_u8((fmt << 6) | (csid as u8 & 0x3f));
-
-            // Message Header
-            match fmt {
-                0 => {
-                    dst.put_u24(ts_field);
-                    dst.put_u24(msg.header.msg_len as u32);
-                    dst.put_u8(msg.header.msg_type);
-                    dst.put_u32_le(msg.header.stream_id);
-                }
-                1 => {
-                    dst.put_u24(ts_field);
-                    dst.put_u24(msg.header.msg_len as u32);
-                    dst.put_u8(msg.header.msg_type);
-                }
-                2 => {
-                    dst.put_u24(ts_field);
-                }
-                3 => {}
-                _ => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("Invalid chunk format: {}", fmt),
-                    ));
-                }
-            }
-
-            // Extended Timestamp
-            if need_ext_ts {
-                dst.put_u32(ts_value);
-            }
-
-            // Chunk Data
-            dst.extend_from_slice(&payload[offset..offset + payload_len]);
-            offset += payload_len;
+        for chunk in RtmpMessageIter::from_message(self, &msg) {
+            dst.extend_from_slice(&chunk.raw_bytes);
         }
-
-        // 更新last_headers供下次比较
-        // 我们的实现约定: fmt 0 = 绝对时间戳, fmt 1/2/3 = 增量时间戳
-        // 这个约定确保了对任何符合协议的解码器的兼容性:
-        //   - fmt 0 输出绝对时间戳，解码器将其作为基准
-        //   - fmt 1/2 输出增量时间戳，解码器将其累加
-        //   - fmt 3 不输出时间戳，解码器复用上次的增量
-        // 我们的 fmt 选择逻辑保证了不会在 fmt 0 后的下条消息首 chunk 使用 fmt 3，避免混淆绝对值和增量
-        self.last_headers[csid] = Some(RtmpChunkHeader {
-            fmt: first_fmt,
-            csid,
-            timestamp: RtmpChunkTimestamp {
-                delta: first_fmt != 0,          // fmt 0 → 绝对, 其他 → 增量
-                raw: ts_field,                  // 记录写入的ts_field值
-                absolute: msg.header.timestamp, // 记录绝对时间戳用于计算下次增量
-            },
-            msg_len: msg.header.msg_len,
-            msg_type: msg.header.msg_type,
-            stream_id: msg.header.stream_id,
-        });
-
         Ok(())
     }
 }
@@ -448,13 +343,13 @@ impl<S: AsyncRead + Unpin> Stream for RtmpMessageStream<S> {
     }
 }
 
-impl RtmpMessageIter {
+impl<'a> RtmpMessageIter<'a> {
     pub fn from_payload(
+        codec: &'a mut RtmpCodec,
         csid: u8,
         timestamp: u32,
         msg_type: u8,
         stream_id: u32,
-        chunk_size: usize,
         payload: &Bytes,
     ) -> Self {
         let header = RtmpMessageHeader {
@@ -464,27 +359,24 @@ impl RtmpMessageIter {
             stream_id,
         };
         Self {
+            codec,
             csid: csid as usize,
             header,
-            chunk_size,
             payload: BytesMut::from(&payload[..]),
-            first: true,
         }
     }
 
-    pub fn from_message(msg: &RtmpMessage, chunk_size: usize) -> Self {
-        let payload = msg.payload();
+    pub fn from_message(codec: &'a mut RtmpCodec, msg: &RtmpMessage) -> Self {
         Self {
+            codec,
             csid: msg.csid as usize,
             header: msg.header.clone(),
-            chunk_size,
-            payload: payload.into(),
-            first: true,
+            payload: msg.payload().into(),
         }
     }
 }
 
-impl Iterator for RtmpMessageIter {
+impl<'a> Iterator for RtmpMessageIter<'a> {
     type Item = RtmpChunk;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -492,59 +384,112 @@ impl Iterator for RtmpMessageIter {
             return None;
         }
 
-        /* ---------- payload split ---------- */
-        let payload_len = self.chunk_size.min(self.payload.len());
+        let first = self.header.msg_len == self.payload.len();
+
+        // 只在第一个chunk时计算first_fmt
+        let (fmt, ts_value, ts_field) = if first {
+            // 按FFmpeg逻辑选择format
+            if let Some(last) = &self.codec.last_headers[self.csid] {
+                let use_delta = last.stream_id == self.header.stream_id
+                    && self.header.timestamp >= last.timestamp.absolute;
+
+                let timestamp = if use_delta {
+                    self.header.timestamp.wrapping_sub(last.timestamp.absolute)
+                } else {
+                    self.header.timestamp
+                };
+
+                let ts_field = if timestamp >= 0xFFFFFF {
+                    0xFFFFFF
+                } else {
+                    timestamp
+                };
+
+                let first_fmt = if !use_delta {
+                    0
+                } else if last.msg_type != self.header.msg_type
+                    || last.msg_len != self.header.msg_len
+                {
+                    1
+                } else if !last.timestamp.delta || ts_field != last.timestamp.raw {
+                    // 只有上次也是增量时间戳，且ts_field相同，才能用fmt 3
+                    // 这比FFmpeg更严格，但兼容性更好
+                    2
+                } else {
+                    3
+                };
+
+                (first_fmt, timestamp, ts_field)
+            } else {
+                let ts_field = if self.header.timestamp >= 0xFFFFFF {
+                    0xFFFFFF
+                } else {
+                    self.header.timestamp
+                };
+                (0, self.header.timestamp, ts_field)
+            }
+        } else {
+            let ts_field = if self.header.timestamp >= 0xFFFFFF {
+                0xFFFFFF
+            } else {
+                self.header.timestamp
+            };
+            (3, self.header.timestamp, ts_field)
+        };
+
+        let need_ext_ts = ts_field == 0xFFFFFF;
+
+        // 计算当前 chunk 长度
+        let payload_len = self.codec.chunk_size.min(self.payload.len());
         let payload = self.payload.split_to(payload_len);
 
-        let fmt = if self.first { 0 } else { 3 };
-        self.first = false;
-
-        /* ---------- timestamp ---------- */
-        let ts = self.header.timestamp;
-        let need_ext_ts = ts >= 0xFFFFFF;
-        let ts_field = if need_ext_ts { 0xFFFFFF } else { ts };
-
-        /* ---------- build raw bytes ---------- */
+        // 构建chunk
         let mut buf = BytesMut::with_capacity(64 + payload_len);
 
-        /* ===== Basic Header ===== */
+        // Basic Header
         buf.put_u8((fmt << 6) | (self.csid as u8 & 0x3f));
 
-        /* ===== Message Header ===== */
-        if fmt < 3 {
-            // timestamp / timestamp delta
-            buf.put_u24(ts_field);
-
-            if fmt < 2 {
+        // Message Header
+        match fmt {
+            0 => {
+                buf.put_u24(ts_field);
                 buf.put_u24(self.header.msg_len as u32);
                 buf.put_u8(self.header.msg_type);
-
-                if fmt == 0 {
-                    buf.put_u32_le(self.header.stream_id);
-                }
+                buf.put_u32_le(self.header.stream_id);
             }
+            1 => {
+                buf.put_u24(ts_field);
+                buf.put_u24(self.header.msg_len as u32);
+                buf.put_u8(self.header.msg_type);
+            }
+            2 => {
+                buf.put_u24(ts_field);
+            }
+            3 => {}
+            _ => unreachable!(),
         }
 
-        /* ===== Extended Timestamp ===== */
+        // Extended Timestamp
         if need_ext_ts {
-            buf.put_u32(ts);
+            buf.put_u32(ts_value);
         }
 
         let payload_offset = buf.len();
 
-        /* ===== Chunk Data ===== */
+        // Chunk Data
         buf.extend_from_slice(&payload);
 
         let msg_complete = self.payload.is_empty();
 
-        Some(RtmpChunk {
+        // 创建chunk
+        let chunk = RtmpChunk {
             header: RtmpChunkHeader {
                 fmt,
                 csid: self.csid,
                 timestamp: RtmpChunkTimestamp {
-                    absolute: ts,
-                    raw: ts_field,
-                    delta: false,
+                    delta: fmt != 0,                 // fmt 0 → 绝对, 其他 → 增量
+                    raw: ts_field,                   // 记录写入的ts_field值
+                    absolute: self.header.timestamp, // 记录绝对时间戳用于计算下次增量
                 },
                 msg_len: self.header.msg_len,
                 msg_type: self.header.msg_type,
@@ -553,6 +498,19 @@ impl Iterator for RtmpMessageIter {
             payload_offset,
             msg_complete,
             raw_bytes: buf.freeze(),
-        })
+        };
+
+        // 更新last_headers供下次比较 - 只有首chunk才更新
+        if first {
+            // 我们的实现约定: fmt 0 = 绝对时间戳, fmt 1/2/3 = 增量时间戳
+            // 这个约定确保了对任何符合协议的解码器的兼容性:
+            //   - fmt 0 输出绝对时间戳，解码器将其作为基准
+            //   - fmt 1/2 输出增量时间戳，解码器将其累加
+            //   - fmt 3 不输出时间戳，解码器复用上次的增量
+            // 我们的 fmt 选择逻辑保证了不会在 fmt 0 后的下条消息首 chunk 使用 fmt 3，避免混淆绝对值和增量
+            self.codec.last_headers[self.csid] = Some(chunk.header);
+        }
+
+        Some(chunk)
     }
 }

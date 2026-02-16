@@ -32,7 +32,9 @@ where
             s.write_all(chunk.raw_bytes()).await?;
         }
     } else {
-        for chunk in RtmpMessageIter::from_message(msg, chunk_size) {
+        // 创建一个临时的RtmpCodec用于生成chunks
+        let mut codec = RtmpCodec::new(chunk_size);
+        for chunk in RtmpMessageIter::from_message(&mut codec, msg) {
             s.write_all(chunk.raw_bytes()).await?;
         }
     }
@@ -51,9 +53,16 @@ pub async fn write_rtmp_message2<S>(
 where
     S: AsyncWrite + Unpin,
 {
-    for chunk in
-        RtmpMessageIter::from_payload(csid, timestamp, msg_type, stream_id, chunk_size, payload)
-    {
+    // 创建一个临时的RtmpCodec用于生成chunks
+    let mut codec = RtmpCodec::new(chunk_size);
+    for chunk in RtmpMessageIter::from_payload(
+        &mut codec,
+        csid,
+        timestamp,
+        msg_type,
+        stream_id,
+        payload,
+    ) {
         s.write_all(chunk.raw_bytes()).await?;
     }
     Ok(())
