@@ -490,14 +490,9 @@ impl RtmpCommand {
     {
         // 创建一个临时的RtmpCodec用于生成chunks
         let mut codec = super::codec::RtmpCodec::new(chunk_size);
-        for chunk in RtmpMessageIter::from_payload(
-            &mut codec,
-            csid,
-            0,
-            20,
-            stream_id,
-            &self.payload(),
-        ) {
+        for chunk in
+            RtmpMessageIter::from_payload(&mut codec, csid, 0, 20, stream_id, &self.payload())
+        {
             w.write_all(chunk.raw_bytes()).await?;
         }
         Ok(())

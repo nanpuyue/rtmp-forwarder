@@ -7,7 +7,7 @@ use crate::error::Context;
 use crate::error::Result;
 
 pub use self::amf::RtmpCommand;
-pub use self::codec::{RtmpMessage, RtmpMessageStream, RtmpCodec};
+pub use self::codec::{RtmpCodec, RtmpMessage, RtmpMessageStream};
 pub use self::handshake::{handshake_with_client, handshake_with_server};
 
 mod amf;
@@ -55,14 +55,9 @@ where
 {
     // 创建一个临时的RtmpCodec用于生成chunks
     let mut codec = RtmpCodec::new(chunk_size);
-    for chunk in RtmpMessageIter::from_payload(
-        &mut codec,
-        csid,
-        timestamp,
-        msg_type,
-        stream_id,
-        payload,
-    ) {
+    for chunk in
+        RtmpMessageIter::from_payload(&mut codec, csid, timestamp, msg_type, stream_id, payload)
+    {
         s.write_all(chunk.raw_bytes()).await?;
     }
     Ok(())

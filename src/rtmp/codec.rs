@@ -112,6 +112,8 @@ impl RtmpMessage {
 pub struct RtmpMessageIter<'a> {
     codec: &'a mut RtmpCodec,
     csid: usize,
+    ts_value: u32,
+    ts_field: u32,
     header: RtmpMessageHeader,
     payload: BytesMut,
 }
@@ -361,17 +363,24 @@ impl<'a> RtmpMessageIter<'a> {
         Self {
             codec,
             csid: csid as usize,
+            ts_field: 0,
+            ts_value: 0,
             header,
             payload: BytesMut::from(&payload[..]),
         }
     }
 
     pub fn from_message(codec: &'a mut RtmpCodec, msg: &RtmpMessage) -> Self {
+        let payload = msg.payload();
+        assert_eq!(msg.header.msg_len, payload.len());
+
         Self {
             codec,
             csid: msg.csid as usize,
+            ts_field: 0,
+            ts_value: 0,
             header: msg.header.clone(),
-            payload: msg.payload().into(),
+            payload: payload.into(),
         }
     }
 }
@@ -385,65 +394,58 @@ impl<'a> Iterator for RtmpMessageIter<'a> {
         }
 
         let first = self.header.msg_len == self.payload.len();
-
-        // 只在第一个chunk时计算first_fmt
-        let (fmt, ts_value, ts_field) = if first {
-            // 按FFmpeg逻辑选择format
+        let fmt = if first {
+            // 按 FFmpeg 逻辑选择首 chunk fmt
             if let Some(last) = &self.codec.last_headers[self.csid] {
                 let use_delta = last.stream_id == self.header.stream_id
                     && self.header.timestamp >= last.timestamp.absolute;
 
-                let timestamp = if use_delta {
+                // 时间戳表示值（绝对值或增量）
+                self.ts_value = if use_delta {
                     self.header.timestamp.wrapping_sub(last.timestamp.absolute)
                 } else {
                     self.header.timestamp
                 };
-
-                let ts_field = if timestamp >= 0xFFFFFF {
+                // 头部时间戳字段值
+                self.ts_field = if self.ts_value >= 0xFFFFFF {
                     0xFFFFFF
                 } else {
-                    timestamp
+                    self.ts_value
                 };
 
-                let first_fmt = if !use_delta {
+                if !use_delta {
                     0
                 } else if last.msg_type != self.header.msg_type
                     || last.msg_len != self.header.msg_len
                 {
                     1
-                } else if !last.timestamp.delta || ts_field != last.timestamp.raw {
-                    // 只有上次也是增量时间戳，且ts_field相同，才能用fmt 3
-                    // 这比FFmpeg更严格，但兼容性更好
+                } else if !last.timestamp.delta || self.ts_field != last.timestamp.raw {
+                    // 只有上次也是增量时间戳，且 ts_field 相同，才能用 fmt 3
+                    // 这比 FFmpeg 更严格，但兼容性更好
                     2
                 } else {
                     3
-                };
-
-                (first_fmt, timestamp, ts_field)
+                }
             } else {
-                let ts_field = if self.header.timestamp >= 0xFFFFFF {
+                // 首个消息，时间戳使用绝对值
+                self.ts_value = self.header.timestamp;
+                self.ts_field = if self.ts_value >= 0xFFFFFF {
                     0xFFFFFF
                 } else {
-                    self.header.timestamp
+                    self.ts_value
                 };
-                (0, self.header.timestamp, ts_field)
+                0
             }
         } else {
-            let ts_field = if self.header.timestamp >= 0xFFFFFF {
-                0xFFFFFF
-            } else {
-                self.header.timestamp
-            };
-            (3, self.header.timestamp, ts_field)
+            // 续 chunk
+            3
         };
-
-        let need_ext_ts = ts_field == 0xFFFFFF;
 
         // 计算当前 chunk 长度
         let payload_len = self.codec.chunk_size.min(self.payload.len());
         let payload = self.payload.split_to(payload_len);
 
-        // 构建chunk
+        // 构建 chunk
         let mut buf = BytesMut::with_capacity(64 + payload_len);
 
         // Basic Header
@@ -452,26 +454,26 @@ impl<'a> Iterator for RtmpMessageIter<'a> {
         // Message Header
         match fmt {
             0 => {
-                buf.put_u24(ts_field);
+                buf.put_u24(self.ts_field);
                 buf.put_u24(self.header.msg_len as u32);
                 buf.put_u8(self.header.msg_type);
                 buf.put_u32_le(self.header.stream_id);
             }
             1 => {
-                buf.put_u24(ts_field);
+                buf.put_u24(self.ts_field);
                 buf.put_u24(self.header.msg_len as u32);
                 buf.put_u8(self.header.msg_type);
             }
             2 => {
-                buf.put_u24(ts_field);
+                buf.put_u24(self.ts_field);
             }
             3 => {}
             _ => unreachable!(),
         }
 
-        // Extended Timestamp
-        if need_ext_ts {
-            buf.put_u32(ts_value);
+        // 根据 ts_field 判断是否需要扩展时间戳
+        if self.ts_field == 0xFFFFFF {
+            buf.put_u32(self.ts_value);
         }
 
         let payload_offset = buf.len();
@@ -481,14 +483,14 @@ impl<'a> Iterator for RtmpMessageIter<'a> {
 
         let msg_complete = self.payload.is_empty();
 
-        // 创建chunk
+        // 创建 chunk
         let chunk = RtmpChunk {
             header: RtmpChunkHeader {
                 fmt,
                 csid: self.csid,
                 timestamp: RtmpChunkTimestamp {
                     delta: fmt != 0,                 // fmt 0 → 绝对, 其他 → 增量
-                    raw: ts_field,                   // 记录写入的ts_field值
+                    raw: self.ts_field,              // 记录写入的 ts_field 值
                     absolute: self.header.timestamp, // 记录绝对时间戳用于计算下次增量
                 },
                 msg_len: self.header.msg_len,
@@ -500,7 +502,7 @@ impl<'a> Iterator for RtmpMessageIter<'a> {
             raw_bytes: buf.freeze(),
         };
 
-        // 更新last_headers供下次比较 - 只有首chunk才更新
+        // 更新 last_headers 供下次比较 - 只有首 chunk 才更新
         if first {
             // 我们的实现约定: fmt 0 = 绝对时间戳, fmt 1/2/3 = 增量时间戳
             // 这个约定确保了对任何符合协议的解码器的兼容性:
