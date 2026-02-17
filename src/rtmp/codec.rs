@@ -294,6 +294,17 @@ impl Encoder<RtmpMessage> for RtmpCodec {
     }
 }
 
+impl Encoder<RtmpMessage> for &mut RtmpCodec {
+    type Error = io::Error;
+
+    fn encode(&mut self, msg: RtmpMessage, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        for chunk in RtmpMessageIter::from_message(self, &msg) {
+            dst.extend_from_slice(&chunk.raw_bytes);
+        }
+        Ok(())
+    }
+}
+
 impl<S: AsyncRead + Unpin> RtmpMessageStream<S> {
     pub fn new(s: S, chunk_size: usize) -> Self {
         let codec = RtmpCodec::new(chunk_size);

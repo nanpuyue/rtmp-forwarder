@@ -43,7 +43,6 @@ pub enum ForwardEvent {
 
 /// Retry state for connection attempts
 struct ConnectionState {
-    conn: Option<FramedWrite<tcp::OwnedWriteHalf, RtmpCodec>>,
     failure: u32,
     last_attempt: Instant,
 }
@@ -53,7 +52,6 @@ const MAX_FAILURE: u32 = 5;
 impl ConnectionState {
     fn new() -> Self {
         Self {
-            conn: None,
             failure: 0,
             last_attempt: Instant::now(),
         }
@@ -88,7 +86,6 @@ pub struct Forwarder {
     pub config: ForwarderConfig,
     pub rx: broadcast::Receiver<ForwardEvent>,
     pub snapshot: ProtocolSnapshot,
-    pub codec: RtmpCodec,
 }
 
 impl Forwarder {
@@ -108,6 +105,7 @@ impl Forwarder {
     pub async fn run(mut self) {
         info!("#{} [{}] started", self.index, self.config.addr);
         let mut state = ConnectionState::new();
+        let mut framed = None;
 
         while state.failure < MAX_FAILURE {
             let event = match self.rx.recv().await {
@@ -136,16 +134,15 @@ impl Forwarder {
                         continue;
                     }
 
-                    let mut chunk_size_changed = false;
-                    if msg.header().msg_type == 1 && msg.header().msg_len >= 4 {
+                    // 若为 SetChunkSize 消息，当前消息转发后更新 chunk_size
+                    let set_chunk_size = msg.header().msg_type == 1 && msg.header().msg_len >= 4;
+                    if set_chunk_size {
                         self.chunk_size =
                             u32::from_be_bytes(msg.payload()[..4].try_into().unwrap()) as usize;
-                        self.codec.set_chunk_size(self.chunk_size);
-                        chunk_size_changed = true;
                     };
 
                     // Try to establish connection with retry logic
-                    if state.conn.is_none() && state.can_attempt() {
+                    if framed.is_none() && state.can_attempt() {
                         state.last_attempt = Instant::now();
                         debug!(
                             "[{}] Connecting (attempt #{})",
@@ -153,41 +150,41 @@ impl Forwarder {
                             state.failure + 1
                         );
 
-                        if let Some(conn) = self.try_connect().await {
+                        if let Some((w, codec)) = self.try_connect().await {
                             info!(
                                 "#{} [{}] entered forwarding state",
                                 self.index, self.config.addr
                             );
-                            state.conn = Some(conn);
+                            // 创建 FramedWrite
+                            framed = Some(FramedWrite::new(w, codec));
                         } else {
                             if self.failure_reached(&mut state) {
                                 break;
                             }
                         }
-                    }
+                    };
 
-                    // Forward media data if connected
-                    if state.conn.is_some() {
+                    // Send the message if we're connected
+                    if let Some(f) = framed.as_mut() {
                         msg.set_stream_id(self.stream_id);
-                        let framed = state.conn.as_mut().unwrap();
-                        if let Err(e) = framed.send(msg).await {
+                        if let Err(e) = f.send(msg).await {
                             warn!(
                                 "#{} [{}] send error: {}, dropping connection",
                                 self.index, self.config.addr, e
                             );
-                            state.conn = None;
+                            framed = None;
                             if self.failure_reached(&mut state) {
                                 break;
                             }
-                        } else if chunk_size_changed {
-                            framed.encoder_mut().set_chunk_size(self.chunk_size);
+                        } else if set_chunk_size {
+                            f.encoder_mut().set_chunk_size(self.chunk_size);
                         }
                     };
                 }
                 ForwardEvent::Shutdown(index) => {
                     if index == self.index {
-                        if let Some(ref mut framed) = state.conn {
-                            self.shutdown(framed).await;
+                        if let Some(ref mut f) = framed {
+                            self.shutdown(f).await;
                         }
                         break;
                     }
@@ -199,7 +196,7 @@ impl Forwarder {
     }
 
     /// Attempt to connect and perform RTMP handshake + setup.
-    async fn try_connect(&mut self) -> Option<FramedWrite<tcp::OwnedWriteHalf, RtmpCodec>> {
+    async fn try_connect(&mut self) -> Option<(tcp::OwnedWriteHalf, RtmpCodec)> {
         let mut addr = self.config.addr.clone();
         if !addr.contains(':') {
             addr.push_str(":1935");
@@ -218,10 +215,8 @@ impl Forwarder {
                 let response_rx = Self::spawn_response_reader(r);
 
                 // Perform RTMP command sequence (Connect -> Publish)
-                if self.setup_protocol(&mut w, response_rx).await.is_ok() {
-                    // 创建 FramedWrite
-                    let framed = FramedWrite::new(w, self.codec.clone());
-                    return Some(framed);
+                if let Ok(codec) = self.setup_protocol(&mut w, response_rx).await {
+                    return Some((w, codec));
                 }
             }
         }
@@ -267,7 +262,7 @@ impl Forwarder {
         &mut self,
         w: &mut tcp::OwnedWriteHalf,
         mut response_rx: mpsc::Receiver<RtmpMessage>,
-    ) -> Result<()> {
+    ) -> Result<RtmpCodec> {
         let app = &self
             .config
             .app
@@ -365,6 +360,7 @@ impl Forwarder {
         // self.handle_server_response(&mut response_rx, 5.0).await?;
 
         // 6. Sync initial state (MetaData + Sequence Headers) so the stream can be decoded instantly
+        let mut codec = RtmpCodec::new(self.chunk_size);
         for m in [
             &self.snapshot.metadata,
             &self.snapshot.video_seq_hdr,
@@ -377,10 +373,10 @@ impl Forwarder {
             m.set_stream_id(self.stream_id);
 
             let mut buf = BytesMut::new();
-            self.codec.encode(m.clone(), &mut buf)?;
+            codec.encode(m.clone(), &mut buf)?;
             w.write_all(&buf).await?;
         }
-        Ok(())
+        Ok(codec)
     }
 
     /// 处理服务器响应
