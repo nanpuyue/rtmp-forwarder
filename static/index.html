@@ -45,6 +45,9 @@
         .left-panel video {
             width: 100%;
             aspect-ratio: 16/9;
+            max-height: 70vh;
+            object-fit: cover;
+            border-radius: 12px;
         }
 
         .right-panel {
@@ -78,7 +81,10 @@
 
             video {
                 border-radius: 8px !important;
-                aspect-ratio: 16/9 !important;
+                width: 100% !important;
+                height: auto !important;
+                max-height: 70vh !important;
+                object-fit: contain !important;
             }
         }
 
@@ -443,7 +449,7 @@
             <div class="main-card">
                 <div class="left-panel">
                     <video id="video" controls autoplay muted playsinline
-                        style="width: 100%; height: 100%; object-fit: cover; background: black; border-radius: 12px;"></video>
+                        style="width: 100%; height: auto; max-height: 70vh; object-fit: cover; background: black; border-radius: 12px;"></video>
                     <div class="logo">RTMP Forwarder</div>
                 </div>
 
@@ -648,8 +654,15 @@
 
         const setVideoAspectRatio = (ratio) => {
             const video = document.getElementById('video');
-            video.style.aspectRatio = ratio;
-            video.style.objectFit = 'cover';
+            if (ratio === 'auto') {
+                // 有视频时自适应
+                video.style.aspectRatio = 'auto';
+                video.style.objectFit = 'contain';
+            } else {
+                // 没有视频时保持16:9
+                video.style.aspectRatio = ratio;
+                video.style.objectFit = 'cover';
+            }
         };
 
         let config = {};
