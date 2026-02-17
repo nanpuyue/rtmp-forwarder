@@ -45,7 +45,6 @@
             position: relative;
             width: 100%;
             aspect-ratio: 16/9;
-            max-height: 70vh;
         }
 
         .video-container video {
@@ -60,7 +59,8 @@
             flex: 0 0 350px;
         }
 
-        @media (max-width: 768px) {
+        /* 竖屏模式 */
+        @media (orientation: portrait) {
             .container {
                 padding: 1rem;
             }
@@ -79,18 +79,31 @@
                 padding: 0.5rem;
             }
 
-            .logo {
-                font-size: 3vw !important;
+            .video-container .logo {
+                font-size: 1.5vw !important;
                 bottom: 0.5rem !important;
                 left: 0.5rem !important;
             }
 
-            video {
+            .video-container video {
                 border-radius: 8px !important;
-                width: 100% !important;
-                height: auto !important;
-                max-height: 70vh !important;
-                object-fit: contain !important;
+                object-fit: cover !important;
+            }
+        }
+
+        /* 横屏模式 - 只区分横竖屏，无大小限制 */
+        @media (orientation: landscape) {
+            .main-card {
+                flex-direction: row;
+                gap: 1.5rem;
+            }
+
+            .left-panel {
+                flex: 0 0 70%;
+            }
+
+            .right-panel {
+                flex: 1;
             }
         }
 
@@ -567,7 +580,7 @@
                     const data = JSON.parse(event.data);
                     console.log('Stream status:', data.status);
                     streamState = data.status;
-                    
+
                     if (streamState === 'publishing') {
                         fetchStreamInfo();
                     } else {
@@ -824,12 +837,12 @@
             const isPublishing = streamState === 'publishing';
             const relayAddr = config.relay_addr || '';
             const origDestAddr = isPublishing ? (streamInfo?.orig_dest_addr || '') : '等待推流...';
-            
+
             // 更新首页显示
             const displayInput = document.getElementById('relay_display');
             displayInput.value = relayAddr;
             displayInput.placeholder = origDestAddr;
-            
+
             // 更新模态框
             document.getElementById('relay_modal_tcurl').value = isPublishing ? (streamInfo?.tc_url || '') : '等待推流...';
             document.getElementById('relay_modal_stream').value = isPublishing ? (streamInfo?.stream_key || '') : '等待推流...';
