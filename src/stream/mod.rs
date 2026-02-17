@@ -7,8 +7,10 @@ use tracing::warn;
 
 use crate::rtmp::RtmpMessage;
 
+pub use self::detect::KeyframeDetect;
 pub use self::flv::FlvManager;
 
+mod detect;
 mod flv;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

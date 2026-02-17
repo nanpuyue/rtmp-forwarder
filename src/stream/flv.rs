@@ -4,10 +4,11 @@ use std::time::Duration;
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::sync::broadcast;
 use tokio::time::timeout;
-use tracing::info;
+use tracing::{debug, info};
 
 use super::{StreamManager, StreamMessage, StreamSnapshot};
 use crate::rtmp::RtmpMessage;
+use crate::stream::KeyframeDetect;
 use crate::util::PutU24;
 
 pub struct FlvManager {
@@ -53,19 +54,8 @@ impl FlvManager {
             loop {
                 match rx.recv().await {
                     Ok(data) => {
-                        // FLV tag header格式：
-                        // [1字节tag类型][3字节数据长度][3字节时间戳][1字节时间戳扩展][3字节流ID][payload...]
-                        // payload起始位置固定为第11字节
-
-                        // 检查数据长度足够且为视频包 (tag_type = 9)
-                        // payload[0] = frame_type(4位) + codec_id(4位)
-                        // 0x17 = 0001 0111, 前4位是frame_type, 后4位是codec_id
-                        if data.len() >= 21 // 数据长度
-                            && data[0] == 9 // tag 类型
-                            && data[11] >> 4 == 0x01 // 帧类型
-                            // 帧类型不可靠，检查 NALU
-                            && data[20] & 0x1f == 5
-                        {
+                        if data.is_keyframe() {
+                            debug!("first keyframe detected, size: {}", data.len());
                             break data;
                         }
                     }
