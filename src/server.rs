@@ -2,14 +2,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
-use bytes::Bytes;
 use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 
 use crate::error::Result;
+use crate::rtmp::handshake_with_client;
 use crate::rtmp::{RtmpCommand, RtmpMessage, RtmpMessageStream};
-use crate::rtmp::{handshake_with_client, write_rtmp_message2};
 use crate::stream::{StreamError, StreamInfo, StreamManager, StreamState};
 use crate::util::{get_original_destination, try_handle_socks5};
 
@@ -158,41 +157,17 @@ pub async fn handle_client(
                             );
 
                             // Window Ack Size
-                            write_rtmp_message2(
-                                &mut client_tx,
-                                2,
-                                0,
-                                5,
-                                0,
-                                &Bytes::from(2500000u32.to_be_bytes().to_vec()),
-                                s2c_chunk,
-                            )
-                            .await
-                            .ok();
+                            RtmpMessage::window_ack_size(2500000)
+                                .write_to(&mut client_tx)
+                                .await?;
                             // Peer Bandwidth
-                            write_rtmp_message2(
-                                &mut client_tx,
-                                2,
-                                0,
-                                6,
-                                0,
-                                &Bytes::from(&[0x26, 0x25, 0xa0, 0x00, 0x02][..]),
-                                s2c_chunk,
-                            )
-                            .await
-                            .ok();
+                            RtmpMessage::set_peer_bandwidth(2500000, 2)
+                                .write_to(&mut client_tx)
+                                .await?;
                             // Set Chunk Size
-                            write_rtmp_message2(
-                                &mut client_tx,
-                                2,
-                                0,
-                                1,
-                                0,
-                                &Bytes::from(4096u32.to_be_bytes().to_vec()),
-                                s2c_chunk,
-                            )
-                            .await
-                            .ok();
+                            RtmpMessage::set_chunk_size(4096)
+                                .write_to(&mut client_tx)
+                                .await?;
                             s2c_chunk = 4096;
 
                             // _result(connect)

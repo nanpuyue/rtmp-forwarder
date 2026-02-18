@@ -3,7 +3,7 @@ use std::task::{Context, Poll};
 use std::{io, mem};
 
 use bytes::{BufMut, Bytes, BytesMut};
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio_stream::Stream;
 use tokio_util::codec::{Decoder, Encoder, FramedRead};
 
@@ -106,6 +106,50 @@ impl RtmpMessage {
                 chunk.set_stream_id(id);
             }
         }
+    }
+
+    pub async fn write_to(&self, w: &mut (impl AsyncWrite + Unpin)) -> io::Result<()> {
+        for chunk in &self.chunks {
+            w.write_all(&chunk.raw_bytes).await?;
+        }
+        Ok(())
+    }
+
+    fn protocol_control_message(msg_type: u8, payload: &[u8]) -> Self {
+        Self {
+            csid: 2,
+            header: RtmpMessageHeader {
+                timestamp: 0,
+                msg_len: payload.len(),
+                msg_type,
+                stream_id: 0,
+            },
+            chunk_size: 128,
+            chunks: RtmpMessageIter::from_payload(
+                &mut RtmpCodec::new(128),
+                2,
+                0,
+                msg_type,
+                0,
+                &Bytes::copy_from_slice(payload),
+            )
+            .collect(),
+        }
+    }
+
+    pub fn set_chunk_size(size: u32) -> Self {
+        Self::protocol_control_message(1, &size.to_be_bytes())
+    }
+
+    pub fn window_ack_size(size: u32) -> Self {
+        Self::protocol_control_message(5, &size.to_be_bytes())
+    }
+
+    pub fn set_peer_bandwidth(size: u32, limit: u8) -> Self {
+        let mut payload = Vec::with_capacity(5);
+        payload.extend_from_slice(&size.to_be_bytes());
+        payload.push(limit);
+        Self::protocol_control_message(6, &payload)
     }
 }
 

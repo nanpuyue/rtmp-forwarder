@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use futures_util::sink::SinkExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpStream, tcp};
@@ -16,7 +16,6 @@ use tracing::{debug, error, info, warn};
 use crate::config::ForwarderConfig;
 use crate::error::Result;
 use crate::rtmp::handshake_with_server;
-use crate::rtmp::write_rtmp_message2;
 use crate::rtmp::{RtmpCodec, RtmpCommand, RtmpMessage, RtmpMessageStream};
 
 pub use self::manager::{ForwarderManager, ForwarderManagerCommand};
@@ -276,6 +275,15 @@ impl Forwarder {
             .or(self.snapshot.client_stream.clone())
             .unwrap_or_default();
 
+        // 设置 chunk size
+        RtmpMessage::set_chunk_size(self.chunk_size as u32)
+            .write_to(w)
+            .await?;
+        info!(
+            "#{} [{}] set chunk size to {}",
+            self.index, self.config.addr, self.chunk_size
+        );
+
         // 1. connect
         info!(
             "#{} [{}] connect to {}",
@@ -292,7 +300,7 @@ impl Forwarder {
             &format!("rtmp://{}/{}", self.config.addr, app)
         };
         RtmpCommand::connect(1.0, app, tc_url)
-            .send(w, 3, 0, 128)
+            .send(w, 3, 0, self.chunk_size)
             .await?;
 
         // 等待并处理 connect 响应
@@ -301,22 +309,6 @@ impl Forwarder {
             self.handle_server_response(&mut response_rx, 1.0),
         )
         .await??;
-
-        // 设置 chunk size
-        write_rtmp_message2(
-            w,
-            2,
-            0,
-            1,
-            0,
-            &Bytes::from((self.chunk_size as u32).to_be_bytes().to_vec()),
-            128,
-        )
-        .await?;
-        info!(
-            "#{} [{}] set chunk size to {}",
-            self.index, self.config.addr, self.chunk_size
-        );
 
         // 2-3. releaseStream and FCPublish are required by many standard servers (like Nginx-RTMP)
         for (cmd, tx) in [("releaseStream", 2.0), ("FCPublish", 3.0)] {
