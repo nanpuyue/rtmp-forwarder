@@ -84,3 +84,4 @@ impl IntoError for std::io::Error {}
 impl IntoError for tokio::time::error::Elapsed {}
 impl IntoError for std::str::Utf8Error {}
 impl IntoError for serde_json::Error {}
+impl<T> IntoError for tokio::sync::mpsc::error::SendError<T> {}

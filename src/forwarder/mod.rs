@@ -27,12 +27,26 @@ mod manager;
 pub enum ForwarderCommand {
     Message(RtmpMessage),
     Shutdown(usize),
+    Snapshot(StreamSnapshot),
+}
+
+#[derive(Debug)]
+pub enum ForwarderStatus {
+    Connected,
+    Disconnected,
+    Stopped,
+}
+
+#[derive(Debug)]
+pub enum ForwarderEvent {
+    Status(usize, ForwarderStatus),
+    RequestSnapshot(usize),
 }
 
 /// Retry state for connection attempts
 struct ConnectionState {
     failure: u32,
-    last_attempt: Instant,
+    last_failed: Instant,
 }
 
 const MAX_FAILURE: u32 = 5;
@@ -41,12 +55,12 @@ impl ConnectionState {
     fn new() -> Self {
         Self {
             failure: 0,
-            last_attempt: Instant::now(),
+            last_failed: Instant::now(),
         }
     }
 
     fn can_attempt(&mut self) -> bool {
-        if self.last_attempt.elapsed() >= Duration::from_mins(5) {
+        if self.last_failed.elapsed() >= Duration::from_mins(5) {
             self.failure = 0;
         }
         if self.failure >= MAX_FAILURE {
@@ -61,7 +75,7 @@ impl ConnectionState {
             4 => 30,
             _ => 30,
         };
-        self.last_attempt.elapsed() >= Duration::from_secs(backoff_secs)
+        self.last_failed.elapsed() >= Duration::from_secs(backoff_secs)
     }
 }
 
@@ -74,10 +88,19 @@ pub struct Forwarder {
     pub config: ForwarderConfig,
     pub rx: broadcast::Receiver<ForwarderCommand>,
     pub snapshot: StreamSnapshot,
+    pub manager_tx: mpsc::Sender<ForwarderEvent>,
 }
 
 impl Forwarder {
+    async fn send_status(&mut self, status: ForwarderStatus) -> Result<()> {
+        self.manager_tx
+            .send(ForwarderEvent::Status(self.index, status))
+            .await?;
+        Ok(())
+    }
+
     fn failure_reached(&self, s: &mut ConnectionState) -> bool {
+        s.last_failed = Instant::now();
         s.failure += 1;
         let reached = s.failure >= MAX_FAILURE;
         if reached {
@@ -131,7 +154,6 @@ impl Forwarder {
 
                     // Try to establish connection with retry logic
                     if framed.is_none() && state.can_attempt() {
-                        state.last_attempt = Instant::now();
                         debug!(
                             "[{}] Connecting (attempt #{})",
                             self.config.addr,
@@ -145,6 +167,9 @@ impl Forwarder {
                             );
                             // 创建 FramedWrite
                             framed = Some(FramedWrite::new(w, codec));
+                            if self.send_status(ForwarderStatus::Connected).await.is_err() {
+                                break;
+                            }
                         } else {
                             if self.failure_reached(&mut state) {
                                 break;
@@ -161,7 +186,12 @@ impl Forwarder {
                                 self.index, self.config.addr, e
                             );
                             framed = None;
-                            if self.failure_reached(&mut state) {
+                            if self
+                                .send_status(ForwarderStatus::Disconnected)
+                                .await
+                                .is_err()
+                                || self.failure_reached(&mut state)
+                            {
                                 break;
                             }
                         } else if set_chunk_size {
@@ -177,14 +207,45 @@ impl Forwarder {
                         break;
                     }
                 }
+                // 仅在尝试连接时更新快照
+                _ => {}
             }
         }
 
+        let _ = self.send_status(ForwarderStatus::Stopped).await;
         info!("Forwarder [{}] stopped", self.config.addr);
     }
 
     /// Attempt to connect and perform RTMP handshake + setup.
     async fn try_connect(&mut self) -> Option<(tcp::OwnedWriteHalf, RtmpCodec)> {
+        // 请求快照
+        if let Err(e) = self
+            .manager_tx
+            .send(ForwarderEvent::RequestSnapshot(self.index))
+            .await
+        {
+            warn!(
+                "#{} [{}] Failed to send snapshot request: {}",
+                self.index, self.config.addr, e
+            );
+        } else {
+            loop {
+                match self.rx.recv().await {
+                    Ok(ForwarderCommand::Snapshot(snapshot)) => {
+                        self.snapshot = snapshot;
+                        debug!("#{} [{}] snapshot updated", self.index, self.config.addr);
+                        break;
+                    }
+                    // 无流，管理器返回 Shutdown 命令
+                    Ok(ForwarderCommand::Shutdown(index)) if index == self.index => {
+                        // FIXME: 应该停止转发器
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         let mut addr = self.config.addr.clone();
         if !addr.contains(':') {
             addr.push_str(":1935");

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast, mpsc};
 use tracing::{info, warn};
 
+use super::{Forwarder, ForwarderCommand, ForwarderEvent, ForwarderStatus};
 use crate::config::ForwarderConfig;
-use crate::forwarder::{Forwarder, ForwarderCommand};
 use crate::rtmp::RtmpMessage;
 use crate::stream::{StreamEvent, StreamManager, StreamMessage, StreamSnapshot, StreamState};
 
@@ -18,6 +18,8 @@ pub struct ForwarderManager {
     config: Arc<RwLock<Vec<ForwarderConfig>>>,
     command_rx: mpsc::Receiver<ForwarderManagerCommand>,
     event_tx: broadcast::Sender<ForwarderCommand>,
+    event_rx: mpsc::Receiver<ForwarderEvent>,
+    manager_tx: mpsc::Sender<ForwarderEvent>,
     running_configs: Vec<ForwarderConfig>,
 }
 
@@ -28,12 +30,15 @@ impl ForwarderManager {
     ) -> (Self, mpsc::Sender<ForwarderManagerCommand>) {
         let (cmd_tx, cmd_rx) = mpsc::channel(32);
         let (event_tx, _) = broadcast::channel(128);
+        let (manager_tx, event_rx) = mpsc::channel(32);
         (
             Self {
                 stream_manager,
                 config: Arc::new(RwLock::new(initial_config)),
                 command_rx: cmd_rx,
                 event_tx,
+                event_rx,
+                manager_tx,
                 running_configs: Vec::new(),
             },
             cmd_tx,
@@ -91,6 +96,31 @@ impl ForwarderManager {
                         }
                     }
                 }
+
+                Some(msg) = self.event_rx.recv() => {
+                    match msg {
+                        ForwarderEvent::Status(index, status) => {
+                            match status {
+                                ForwarderStatus::Connected=> info!("Forwarder #{} connected",index),
+                                ForwarderStatus::Disconnected=> info!("Forwarder #{} disconnected",index),
+                                ForwarderStatus::Stopped => info!("Forwarder #{} stopped",index),
+                            }
+                        }
+                        ForwarderEvent::RequestSnapshot(index) => {
+                            // 请求快照，发送当前快照给转发器
+                            if let Some(snapshot) = self.stream_manager.get_stream_snapshot().await {
+                                if let Err(e) = self.event_tx.send(ForwarderCommand::Snapshot(snapshot)) {
+                                    warn!("Failed to send snapshot to forwarder #{}: {}", index, e);
+                                } else {
+                                    info!("Sent snapshot to forwarder #{}", index);
+                                }
+                            } else {
+                                warn!("Stream not publishing, stop forwarder #{}", index);
+                                self.event_tx.send(ForwarderCommand::Shutdown(index)).ok();
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -109,6 +139,7 @@ impl ForwarderManager {
             config: config.clone(),
             rx,
             snapshot,
+            manager_tx: self.manager_tx.clone(),
         };
 
         tokio::spawn(forwarder.run());
