@@ -4,7 +4,7 @@ use tokio::sync::{RwLock, broadcast, mpsc};
 use tracing::{info, warn};
 
 use crate::config::ForwarderConfig;
-use crate::forwarder::{ForwardEvent, Forwarder};
+use crate::forwarder::{Forwarder, ForwarderCommand};
 use crate::rtmp::RtmpMessage;
 use crate::stream::{StreamEvent, StreamManager, StreamMessage, StreamSnapshot, StreamState};
 
@@ -17,7 +17,7 @@ pub struct ForwarderManager {
     stream_manager: Arc<StreamManager>,
     config: Arc<RwLock<Vec<ForwarderConfig>>>,
     command_rx: mpsc::Receiver<ForwarderManagerCommand>,
-    event_tx: broadcast::Sender<ForwardEvent>,
+    event_tx: broadcast::Sender<ForwarderCommand>,
     running_configs: Vec<ForwarderConfig>,
 }
 
@@ -51,7 +51,7 @@ impl ForwarderManager {
                     match stream_msg {
                         StreamMessage::RtmpMessage(msg) => {
                             if should_forward(&msg) {
-                                self.event_tx.send(ForwardEvent::Message(msg)).ok();
+                                self.event_tx.send(ForwarderCommand::Message(msg)).ok();
                             }
                         }
                         StreamMessage::StateChanged(event) => {
@@ -116,7 +116,7 @@ impl ForwarderManager {
     }
 
     fn stop_forwarder(&self, index: usize) {
-        self.event_tx.send(ForwardEvent::Shutdown(index)).ok();
+        self.event_tx.send(ForwarderCommand::Shutdown(index)).ok();
         info!("Stopped forwarder #{}", index);
     }
 
@@ -196,7 +196,7 @@ impl ForwarderManager {
     fn stop_all_forwarders(&mut self) {
         for (index, config) in self.running_configs.iter().enumerate() {
             if config.enabled {
-                self.event_tx.send(ForwardEvent::Shutdown(index)).ok();
+                self.event_tx.send(ForwarderCommand::Shutdown(index)).ok();
                 info!("Stopped forwarder #{}", index);
             }
         }

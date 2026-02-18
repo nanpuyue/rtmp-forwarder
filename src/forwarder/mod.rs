@@ -24,7 +24,7 @@ pub use self::manager::{ForwarderManager, ForwarderManagerCommand};
 mod manager;
 
 #[derive(Clone)]
-pub enum ForwardEvent {
+pub enum ForwarderCommand {
     Message(RtmpMessage),
     Shutdown(usize),
 }
@@ -72,7 +72,7 @@ pub struct Forwarder {
     pub chunk_size: usize,
     pub stream_id: u32,
     pub config: ForwarderConfig,
-    pub rx: broadcast::Receiver<ForwardEvent>,
+    pub rx: broadcast::Receiver<ForwarderCommand>,
     pub snapshot: StreamSnapshot,
 }
 
@@ -112,7 +112,7 @@ impl Forwarder {
             };
 
             match event {
-                ForwardEvent::Message(mut msg) => {
+                ForwarderCommand::Message(mut msg) => {
                     // 元数据与序列头：如果转发器启动时客户端尚未发送则后续原样转发
                     // 若客户端已经发送则可从快照中获取
                     // self.snapshot.update_from_message(&msg);
@@ -169,7 +169,7 @@ impl Forwarder {
                         }
                     };
                 }
-                ForwardEvent::Shutdown(index) => {
+                ForwarderCommand::Shutdown(index) => {
                     if index == self.index {
                         if let Some(ref mut f) = framed {
                             self.shutdown(f).await;
