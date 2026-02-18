@@ -108,14 +108,7 @@ impl ForwarderManager {
             stream_id: 1,
             config: config.clone(),
             rx,
-            snapshot: crate::forwarder::ProtocolSnapshot {
-                metadata: snapshot.metadata,
-                video_seq_hdr: snapshot.video_seq_hdr,
-                audio_seq_hdr: snapshot.audio_seq_hdr,
-                tc_url: snapshot.tc_url,
-                client_app: snapshot.app_name,
-                client_stream: snapshot.stream_key,
-            },
+            snapshot,
         };
 
         tokio::spawn(forwarder.run());

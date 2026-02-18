@@ -17,22 +17,11 @@ use crate::config::ForwarderConfig;
 use crate::error::Result;
 use crate::rtmp::handshake_with_server;
 use crate::rtmp::{RtmpCodec, RtmpCommand, RtmpMessage, RtmpMessageStream};
+use crate::stream::StreamSnapshot;
 
 pub use self::manager::{ForwarderManager, ForwarderManagerCommand};
 
 mod manager;
-
-/// ProtocolSnapshot caches the critical state headers and dynamic names
-/// received from the client to sync with new or reconnected destinations.
-#[derive(Clone, Debug, Default)]
-pub struct ProtocolSnapshot {
-    pub metadata: Option<RtmpMessage>,
-    pub video_seq_hdr: Option<RtmpMessage>,
-    pub audio_seq_hdr: Option<RtmpMessage>,
-    pub tc_url: Option<String>,
-    pub client_app: Option<String>,
-    pub client_stream: Option<String>,
-}
 
 #[derive(Clone)]
 pub enum ForwardEvent {
@@ -84,7 +73,7 @@ pub struct Forwarder {
     pub stream_id: u32,
     pub config: ForwarderConfig,
     pub rx: broadcast::Receiver<ForwardEvent>,
-    pub snapshot: ProtocolSnapshot,
+    pub snapshot: StreamSnapshot,
 }
 
 impl Forwarder {
@@ -266,13 +255,13 @@ impl Forwarder {
             .config
             .app
             .clone()
-            .or(self.snapshot.client_app.clone())
+            .or(self.snapshot.app_name.clone())
             .unwrap_or_default();
         let stream = &self
             .config
             .stream
             .clone()
-            .or(self.snapshot.client_stream.clone())
+            .or(self.snapshot.stream_key.clone())
             .unwrap_or_default();
 
         // 设置 chunk size
@@ -456,11 +445,11 @@ impl Forwarder {
             self.config
                 .app
                 .as_deref()
-                .or(self.snapshot.client_app.as_deref()),
+                .or(self.snapshot.app_name.as_deref()),
             self.config
                 .stream
                 .as_deref()
-                .or(self.snapshot.client_stream.as_deref()),
+                .or(self.snapshot.stream_key.as_deref()),
         ) {
             info!("#{} [{}] shutdown", self.index, self.config.addr);
 
