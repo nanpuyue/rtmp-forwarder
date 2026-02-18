@@ -305,7 +305,7 @@ impl Forwarder {
         // 设置 chunk size
         write_rtmp_message2(
             w,
-            3,
+            2,
             0,
             1,
             0,
