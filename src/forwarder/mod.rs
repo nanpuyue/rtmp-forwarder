@@ -110,8 +110,8 @@ impl Forwarder {
             let event = match self.rx.recv().await {
                 Ok(x) => x,
                 Err(RecvError::Lagged(n)) => {
-                    debug!(
-                        "#{} [{}] lagged {} rtmp messages",
+                    warn!(
+                        "#{} [{}] receiver lagged, dropped {} RTMP messages",
                         self.index, self.config.addr, n
                     );
                     continue;
