@@ -11,6 +11,7 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::time::timeout;
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Encoder, FramedWrite};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::config::ForwarderConfig;
@@ -26,8 +27,7 @@ mod manager;
 #[derive(Clone)]
 pub enum ForwarderCommand {
     Message(RtmpMessage),
-    Shutdown(usize),
-    Snapshot(StreamSnapshot),
+    Snapshot(Box<StreamSnapshot>),
 }
 
 #[derive(Debug)]
@@ -89,6 +89,7 @@ pub struct Forwarder {
     pub rx: broadcast::Receiver<ForwarderCommand>,
     pub snapshot: StreamSnapshot,
     pub manager_tx: mpsc::Sender<ForwarderEvent>,
+    pub cancel_token: CancellationToken,
 }
 
 impl Forwarder {
@@ -119,8 +120,14 @@ impl Forwarder {
         let mut framed = None;
 
         while state.failure < MAX_FAILURE {
-            let event = match self.rx.recv().await {
-                Ok(x) => x,
+            // 检查取消信号
+            if self.cancel_token.is_cancelled() {
+                info!("Forwarder #{} cancelled", self.index);
+                break;
+            }
+
+            let mut msg = match self.rx.recv().await {
+                Ok(ForwarderCommand::Message(msg)) => msg,
                 Err(RecvError::Lagged(n)) => {
                     warn!(
                         "#{} [{}] receiver lagged, dropped {} RTMP messages",
@@ -132,86 +139,67 @@ impl Forwarder {
                     warn!("#{} [{}] recv error: {}", self.index, self.config.addr, e);
                     break;
                 }
+                // 仅在尝试连接时更新快照
+                _ => continue,
             };
 
-            match event {
-                ForwarderCommand::Message(mut msg) => {
-                    // 元数据与序列头：如果转发器启动时客户端尚未发送则后续原样转发
-                    // 若客户端已经发送则可从快照中获取
-                    // self.snapshot.update_from_message(&msg);
+            // 若为 SetChunkSize 消息，当前消息转发后更新 chunk_size
+            let set_chunk_size = msg.header().msg_type == 1 && msg.header().msg_len >= 4;
+            if set_chunk_size {
+                self.chunk_size =
+                    u32::from_be_bytes(msg.payload()[..4].try_into().unwrap()) as usize;
+            };
 
-                    // Skip forwarding control commands as we replay our own handshake
-                    if msg.header().msg_type == 20 {
-                        continue;
+            // Try to establish connection with retry logic
+            if framed.is_none() && state.can_attempt() {
+                debug!(
+                    "[{}] Connecting (attempt #{})",
+                    self.config.addr,
+                    state.failure + 1
+                );
+
+                if let Some((w, codec)) = self.try_connect().await {
+                    info!(
+                        "#{} [{}] entered forwarding state",
+                        self.index, self.config.addr
+                    );
+                    // 创建 FramedWrite
+                    framed = Some(FramedWrite::new(w, codec));
+                    if self.send_status(ForwarderStatus::Connected).await.is_err() {
+                        break;
                     }
-
-                    // 若为 SetChunkSize 消息，当前消息转发后更新 chunk_size
-                    let set_chunk_size = msg.header().msg_type == 1 && msg.header().msg_len >= 4;
-                    if set_chunk_size {
-                        self.chunk_size =
-                            u32::from_be_bytes(msg.payload()[..4].try_into().unwrap()) as usize;
-                    };
-
-                    // Try to establish connection with retry logic
-                    if framed.is_none() && state.can_attempt() {
-                        debug!(
-                            "[{}] Connecting (attempt #{})",
-                            self.config.addr,
-                            state.failure + 1
-                        );
-
-                        if let Some((w, codec)) = self.try_connect().await {
-                            info!(
-                                "#{} [{}] entered forwarding state",
-                                self.index, self.config.addr
-                            );
-                            // 创建 FramedWrite
-                            framed = Some(FramedWrite::new(w, codec));
-                            if self.send_status(ForwarderStatus::Connected).await.is_err() {
-                                break;
-                            }
-                        } else {
-                            if self.failure_reached(&mut state) {
-                                break;
-                            }
-                        }
-                    };
-
-                    // Send the message if we're connected
-                    if let Some(f) = framed.as_mut() {
-                        msg.set_stream_id(self.stream_id);
-                        if let Err(e) = f.send(msg).await {
-                            warn!(
-                                "#{} [{}] send error: {}, dropping connection",
-                                self.index, self.config.addr, e
-                            );
-                            framed = None;
-                            if self
-                                .send_status(ForwarderStatus::Disconnected)
-                                .await
-                                .is_err()
-                                || self.failure_reached(&mut state)
-                            {
-                                break;
-                            }
-                        } else if set_chunk_size {
-                            f.encoder_mut().set_chunk_size(self.chunk_size);
-                        }
-                    };
-                }
-                ForwarderCommand::Shutdown(index) => {
-                    if index == self.index {
-                        if let Some(ref mut f) = framed {
-                            self.shutdown(f).await;
-                        }
+                } else {
+                    if self.failure_reached(&mut state) {
                         break;
                     }
                 }
-                // 仅在尝试连接时更新快照
-                _ => {}
-            }
-        }
+            };
 
+            // Send the message if we're connected
+            if let Some(f) = framed.as_mut() {
+                msg.set_stream_id(self.stream_id);
+                if let Err(e) = f.send(msg).await {
+                    warn!(
+                        "#{} [{}] send error: {}, dropping connection",
+                        self.index, self.config.addr, e
+                    );
+                    framed = None;
+                    if self
+                        .send_status(ForwarderStatus::Disconnected)
+                        .await
+                        .is_err()
+                        || self.failure_reached(&mut state)
+                    {
+                        break;
+                    }
+                } else if set_chunk_size {
+                    f.encoder_mut().set_chunk_size(self.chunk_size);
+                }
+            };
+        }
+        if let Some(mut f) = framed {
+            self.shutdown(&mut f).await;
+        }
         let _ = self.send_status(ForwarderStatus::Stopped).await;
         info!("Forwarder [{}] stopped", self.config.addr);
     }
@@ -229,19 +217,11 @@ impl Forwarder {
                 self.index, self.config.addr, e
             );
         } else {
-            loop {
-                match self.rx.recv().await {
-                    Ok(ForwarderCommand::Snapshot(snapshot)) => {
-                        self.snapshot = snapshot;
-                        debug!("#{} [{}] snapshot updated", self.index, self.config.addr);
-                        break;
-                    }
-                    // 无流，管理器返回 Shutdown 命令
-                    Ok(ForwarderCommand::Shutdown(index)) if index == self.index => {
-                        // FIXME: 应该停止转发器
-                        break;
-                    }
-                    _ => {}
+            while !self.cancel_token.is_cancelled() {
+                if let Ok(ForwarderCommand::Snapshot(snapshot)) = self.rx.recv().await {
+                    self.snapshot = *snapshot;
+                    debug!("#{} [{}] snapshot updated", self.index, self.config.addr);
+                    break;
                 }
             }
         }

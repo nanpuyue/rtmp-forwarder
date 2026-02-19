@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use tokio::sync::{RwLock, broadcast, mpsc};
-use tracing::{info, warn};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, info, warn};
 
 use super::{Forwarder, ForwarderCommand, ForwarderEvent, ForwarderStatus};
 use crate::config::ForwarderConfig;
@@ -21,6 +22,7 @@ pub struct ForwarderManager {
     event_rx: mpsc::Receiver<ForwarderEvent>,
     manager_tx: mpsc::Sender<ForwarderEvent>,
     running_configs: Vec<ForwarderConfig>,
+    forwarder_tokens: Vec<Option<CancellationToken>>,
 }
 
 impl ForwarderManager {
@@ -40,6 +42,7 @@ impl ForwarderManager {
                 event_rx,
                 manager_tx,
                 running_configs: Vec::new(),
+                forwarder_tokens: Vec::new(),
             },
             cmd_tx,
         )
@@ -109,14 +112,14 @@ impl ForwarderManager {
                         ForwarderEvent::RequestSnapshot(index) => {
                             // 请求快照，发送当前快照给转发器
                             if let Some(snapshot) = self.stream_manager.get_stream_snapshot().await {
-                                if let Err(e) = self.event_tx.send(ForwarderCommand::Snapshot(snapshot)) {
-                                    warn!("Failed to send snapshot to forwarder #{}: {}", index, e);
+                                if let Err(e) = self.event_tx.send(ForwarderCommand::Snapshot(Box::new(snapshot))) {
+                                    warn!("Failed to send snapshot to forwarder #{index}: {e}");
                                 } else {
-                                    info!("Sent snapshot to forwarder #{}", index);
+                                    info!("Sent snapshot to forwarder #{index}");
                                 }
                             } else {
-                                warn!("Stream not publishing, stop forwarder #{}", index);
-                                self.event_tx.send(ForwarderCommand::Shutdown(index)).ok();
+                                warn!("Stream not publishing, stop forwarder #{index}");
+                                self.stop_forwarder(index);
                             }
                         }
                     }
@@ -128,9 +131,15 @@ impl ForwarderManager {
         info!("ForwarderManager stopped");
     }
 
-    fn start_forwarder(&self, index: usize, config: &ForwarderConfig, snapshot: StreamSnapshot) {
+    fn start_forwarder(
+        &mut self,
+        index: usize,
+        config: &ForwarderConfig,
+        snapshot: StreamSnapshot,
+    ) {
         let chunk_size = snapshot.chunk_size;
         let rx = self.event_tx.subscribe();
+        let cancel_token = CancellationToken::new();
 
         let forwarder = Forwarder {
             index,
@@ -140,15 +149,19 @@ impl ForwarderManager {
             rx,
             snapshot,
             manager_tx: self.manager_tx.clone(),
+            cancel_token: cancel_token.clone(),
         };
 
         tokio::spawn(forwarder.run());
+        self.forwarder_tokens[index] = Some(cancel_token);
         info!("Started forwarder #{}: {}", index, config.addr);
     }
 
-    fn stop_forwarder(&self, index: usize) {
-        self.event_tx.send(ForwarderCommand::Shutdown(index)).ok();
-        info!("Stopped forwarder #{}", index);
+    fn stop_forwarder(&mut self, index: usize) {
+        if let Some(token) = self.forwarder_tokens[index].take() {
+            token.cancel();
+            info!("Stop forwarder #{index}");
+        }
     }
 
     async fn sync_forwarders(&mut self, snapshot: StreamSnapshot) {
@@ -159,7 +172,7 @@ impl ForwarderManager {
             if relay.addr.is_empty() && relay.enabled {
                 if let Some(ref addr) = snapshot.orig_dest_addr {
                     relay.addr = addr.clone();
-                    info!("Using original destination for relay: {}", addr);
+                    info!("Using original destination for relay: {addr}");
                 } else {
                     warn!("Relay enabled but no address available");
                     relay.enabled = false;
@@ -174,6 +187,11 @@ impl ForwarderManager {
         let mut restarted = 0;
 
         let max_len = config.len().max(self.running_configs.len());
+
+        // 确保 forwarder_tokens 数组足够大
+        if self.forwarder_tokens.len() < max_len {
+            self.forwarder_tokens.resize(max_len, None);
+        }
 
         for index in 0..max_len {
             let new_config = config.get(index);
@@ -198,7 +216,7 @@ impl ForwarderManager {
                 (Some(new), Some(old)) if new.enabled && old.enabled => {
                     // Both enabled, check if config changed
                     if old.addr != new.addr || old.app != new.app || old.stream != new.stream {
-                        // Restart
+                        // Restart with new config
                         self.stop_forwarder(index);
                         self.start_forwarder(index, new, snapshot.clone());
                         restarted += 1;
@@ -217,21 +235,21 @@ impl ForwarderManager {
 
         // Update running_configs
         self.running_configs = config;
+        self.forwarder_tokens.truncate(self.running_configs.len());
 
-        info!(
-            "Forwarders synced: {} started, {} stopped, {} restarted",
-            started, stopped, restarted
-        );
+        info!("Forwarders synced: {started} started, {stopped} stopped, {restarted} restarted");
     }
 
     fn stop_all_forwarders(&mut self) {
-        for (index, config) in self.running_configs.iter().enumerate() {
-            if config.enabled {
-                self.event_tx.send(ForwarderCommand::Shutdown(index)).ok();
-                info!("Stopped forwarder #{}", index);
+        for (index, token) in self.forwarder_tokens.iter_mut().enumerate() {
+            if let Some(token) = token {
+                token.cancel();
+                debug!("stop forwarder #{index}");
             }
         }
+        info!("All forwarders stopped");
         self.running_configs.clear();
+        self.forwarder_tokens.clear();
     }
 }
 
