@@ -135,14 +135,13 @@ impl Forwarder {
         let mut state = ConnectionState::new();
         let mut framed = None;
 
-        while state.failure < MAX_FAILURE {
-            // 检查取消信号
-            if self.cancel_token.is_cancelled() {
-                info!("Forwarder #{} cancelled", self.index);
-                break;
-            }
+        loop {
+            let recv = tokio::select! {
+                _ = self.cancel_token.cancelled() => break,
+                x = self.rx.recv() => x,
+            };
 
-            let mut msg = match self.rx.recv().await {
+            let mut msg = match recv {
                 Ok(ForwarderCommand::Message(msg)) => msg,
                 Err(RecvError::Lagged(n)) => {
                     warn!(

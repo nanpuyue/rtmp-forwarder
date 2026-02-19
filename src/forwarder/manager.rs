@@ -241,7 +241,7 @@ impl ForwarderManager {
     }
 
     fn stop_all_forwarders(&mut self) {
-        for (index, token) in self.forwarder_tokens.iter_mut().enumerate() {
+        for (index, token) in self.forwarder_tokens.iter().enumerate() {
             if let Some(token) = token {
                 token.cancel();
                 debug!("stop forwarder #{index}");
