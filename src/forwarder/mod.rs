@@ -228,12 +228,17 @@ impl Forwarder {
             .send(ForwarderEvent::RequestSnapshot(self.index))
             .await
         {
-            warn!(
+            error!(
                 "#{} [{}] Failed to send snapshot request: {}",
                 self.index, self.config.addr, e
             );
+            return None;
         } else {
-            while !self.cancel_token.is_cancelled() {
+            let now = Instant::now();
+            while now.elapsed() < Duration::from_secs(1) {
+                if self.cancel_token.is_cancelled() {
+                    return None;
+                }
                 if let Ok(ForwarderCommand::Snapshot(snapshot)) = self.rx.recv().await {
                     self.snapshot = *snapshot;
                     debug!("#{} [{}] snapshot updated", self.index, self.config.addr);
