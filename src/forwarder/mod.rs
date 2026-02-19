@@ -93,6 +93,22 @@ pub struct Forwarder {
 }
 
 impl Forwarder {
+    fn app(&self) -> String {
+        self.config
+            .app
+            .clone()
+            .or(self.snapshot.app_name.clone())
+            .unwrap_or_default()
+    }
+
+    fn stream(&self) -> String {
+        self.config
+            .stream
+            .clone()
+            .or(self.snapshot.stream_key.clone())
+            .unwrap_or_default()
+    }
+
     async fn send_status(&mut self, status: ForwarderStatus) -> Result<()> {
         self.manager_tx
             .send(ForwarderEvent::Status(self.index, status))
@@ -292,20 +308,11 @@ impl Forwarder {
         w: &mut tcp::OwnedWriteHalf,
         mut response_rx: mpsc::Receiver<RtmpMessage>,
     ) -> Result<RtmpCodec> {
-        let app = &self
-            .config
-            .app
-            .clone()
-            .or(self.snapshot.app_name.clone())
-            .unwrap_or_default();
-        let stream = &self
-            .config
-            .stream
-            .clone()
-            .or(self.snapshot.stream_key.clone())
-            .unwrap_or_default();
+        let app = self.app();
+        let stream = self.stream();
 
         // 设置 chunk size
+        self.chunk_size = self.snapshot.chunk_size;
         RtmpMessage::set_chunk_size(self.chunk_size as u32)
             .write_to(w)
             .await?;
@@ -323,11 +330,11 @@ impl Forwarder {
         );
 
         let tc_url = if self.index == 0
-            && let Some(tc_url) = &self.snapshot.tc_url
+            && let Some(tc_url) = self.snapshot.tc_url.clone()
         {
             tc_url
         } else {
-            &format!("rtmp://{}/{}", self.config.addr, app)
+            format!("rtmp://{}/{}", self.config.addr, app)
         };
         RtmpCommand::connect(1.0, app, tc_url)
             .send(w, 3, 0, self.chunk_size)
@@ -344,12 +351,12 @@ impl Forwarder {
         for (cmd, tx) in [("releaseStream", 2.0), ("FCPublish", 3.0)] {
             match cmd {
                 "releaseStream" => {
-                    RtmpCommand::release_stream(tx, stream)
+                    RtmpCommand::release_stream(tx, &stream)
                         .send(w, 3, 0, self.chunk_size)
                         .await?;
                 }
                 "FCPublish" => {
-                    RtmpCommand::fc_publish(tx, stream)
+                    RtmpCommand::fc_publish(tx, &stream)
                         .send(w, 3, 0, self.chunk_size)
                         .await?;
                 }
@@ -372,9 +379,9 @@ impl Forwarder {
         // 5. Start publishing as "live"
         info!(
             "#{} [{}] publish to stream=\"{}\"",
-            self.index, self.config.addr, stream
+            self.index, self.config.addr, &stream
         );
-        RtmpCommand::publish(5.0, stream)
+        RtmpCommand::publish(5.0, &stream)
             .send(w, 3, self.stream_id, self.chunk_size)
             .await?;
 
@@ -482,27 +489,15 @@ impl Forwarder {
     }
 
     async fn shutdown(&self, framed: &mut FramedWrite<tcp::OwnedWriteHalf, RtmpCodec>) {
-        if let (Some(_app), Some(stream)) = (
-            self.config
-                .app
-                .as_deref()
-                .or(self.snapshot.app_name.as_deref()),
-            self.config
-                .stream
-                .as_deref()
-                .or(self.snapshot.stream_key.as_deref()),
-        ) {
-            info!("#{} [{}] shutdown", self.index, self.config.addr);
+        RtmpCommand::fc_unpublish(6.0, self.stream())
+            .send(framed.get_mut(), 3, self.stream_id, self.chunk_size)
+            .await
+            .ok();
 
-            RtmpCommand::fc_unpublish(6.0, stream)
-                .send(framed.get_mut(), 3, self.stream_id, self.chunk_size)
-                .await
-                .ok();
-
-            RtmpCommand::delete_stream(7.0, self.stream_id as f64)
-                .send(framed.get_mut(), 3, self.stream_id, self.chunk_size)
-                .await
-                .ok();
-        }
+        RtmpCommand::delete_stream(7.0, self.stream_id as f64)
+            .send(framed.get_mut(), 3, self.stream_id, self.chunk_size)
+            .await
+            .ok();
+        info!("#{} [{}] shutdown", self.index, self.config.addr);
     }
 }
