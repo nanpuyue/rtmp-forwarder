@@ -1,5 +1,3 @@
-#![feature(if_let_guard)]
-
 use std::sync::{Arc, RwLock};
 
 use clap::Parser;
