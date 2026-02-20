@@ -66,10 +66,12 @@ pub async fn start_web_server(
 async fn static_handler(uri: Uri) -> impl IntoResponse {
     let mut path = uri.path().trim_start_matches('/').to_string();
 
+    // 只有根路径才返回 index.html
     if path.is_empty() {
         path = "index.html".to_string();
     }
 
+    // 对于其他路径，只返回实际存在的静态文件
     match Assets::get(&path) {
         Some(content) => {
             let content_type = if path.ends_with(".html") {
@@ -87,15 +89,7 @@ async fn static_handler(uri: Uri) -> impl IntoResponse {
                 .body(content.data.into())
                 .unwrap()
         }
-        None => {
-            if let Some(content) = Assets::get("index.html") {
-                return Response::builder()
-                    .header(header::CONTENT_TYPE, "text/html")
-                    .body(content.data.into())
-                    .unwrap();
-            }
-            StatusCode::NOT_FOUND.into_response()
-        }
+        None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
