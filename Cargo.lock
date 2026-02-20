@@ -646,6 +646,7 @@ dependencies = [
  "clap",
  "futures-util",
  "nix",
+ "rand",
  "rust-embed",
  "serde",
  "serde_json",

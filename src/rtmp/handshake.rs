@@ -1,3 +1,4 @@
+use rand::Rng;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::debug;
@@ -5,14 +6,6 @@ use tracing::debug;
 use crate::error::{Context, Result};
 
 pub const HANDSHAKE_SIZE: usize = 1536;
-
-// Generate random bytes using std::random (Nightly)
-fn gen_random_buffer(buf: &mut [u8]) {
-    // Requires #![feature(random)]
-    for b in buf.iter_mut() {
-        *b = std::random::random(..);
-    }
-}
 
 pub async fn handshake_with_client<S>(client: &mut S) -> Result<()>
 where
@@ -45,7 +38,7 @@ where
     // next 4 bytes are zero
     s1[4..8].copy_from_slice(&[0, 0, 0, 0]);
     // random fill
-    gen_random_buffer(&mut s1[8..]);
+    rand::rng().fill(&mut s1[8..]);
     s0s1s2.extend_from_slice(&s1);
 
     // S2 construction = C1 (Echo)
@@ -80,7 +73,7 @@ where
     // zero (4 bytes)
     c1[4..8].copy_from_slice(&[0, 0, 0, 0]);
     // random
-    gen_random_buffer(&mut c1[8..]);
+    rand::rng().fill(&mut c1[8..]);
     c0c1.extend_from_slice(&c1);
 
     server
