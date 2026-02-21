@@ -1,3 +1,4 @@
+use std::pin::pin;
 use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
@@ -8,7 +9,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{broadcast, mpsc};
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 use tokio_stream::StreamExt;
 use tokio_util::codec::{Encoder, FramedWrite};
 use tokio_util::sync::CancellationToken;
@@ -23,6 +24,9 @@ use crate::stream::StreamSnapshot;
 pub use self::manager::{ForwarderManager, ForwarderManagerCommand};
 
 mod manager;
+
+const SEND_TIMEOUT: Duration = Duration::from_secs(5);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub enum ForwarderCommand {
@@ -109,7 +113,7 @@ impl Forwarder {
             .unwrap_or_default()
     }
 
-    async fn send_status(&mut self, status: ForwarderStatus) -> Result<()> {
+    async fn send_status(&self, status: ForwarderStatus) -> Result<()> {
         self.manager_tx
             .send(ForwarderEvent::Status(self.index, status))
             .await?;
@@ -134,89 +138,150 @@ impl Forwarder {
         info!("#{} [{}] started", self.index, self.config.addr);
         let mut state = ConnectionState::new();
         let mut framed = None;
+        let mut timeout = pin!(sleep(CONNECT_TIMEOUT));
+        let cancel_token = self.cancel_token.clone();
 
         loop {
-            let recv = tokio::select! {
-                _ = self.cancel_token.cancelled() => break,
-                x = self.rx.recv() => x,
-            };
+            if framed.is_none() {
+                timeout
+                    .as_mut()
+                    .reset((Instant::now() + CONNECT_TIMEOUT).into());
+            } else {
+                timeout
+                    .as_mut()
+                    .reset((Instant::now() + SEND_TIMEOUT).into());
+            }
 
-            let mut msg = match recv {
-                Ok(ForwarderCommand::Message(msg)) => msg,
-                Err(RecvError::Lagged(n)) => {
-                    warn!(
-                        "#{} [{}] receiver lagged, dropped {} RTMP messages",
-                        self.index, self.config.addr, n
-                    );
-                    continue;
-                }
-                Err(e) => {
-                    warn!("#{} [{}] recv error: {}", self.index, self.config.addr, e);
+            tokio::select! {
+                // 检查是否取消
+                _ = cancel_token.cancelled() => {
                     break;
                 }
-                // 仅在尝试连接时更新快照
-                _ => continue,
-            };
-
-            // 若为 SetChunkSize 消息，当前消息转发后更新 chunk_size
-            let set_chunk_size = msg.header().msg_type == 1 && msg.header().msg_len >= 4;
-            if set_chunk_size {
-                self.chunk_size =
-                    u32::from_be_bytes(msg.payload()[..4].try_into().unwrap()) as usize;
-            };
-
-            // Try to establish connection with retry logic
-            if framed.is_none() && state.can_attempt() {
-                debug!(
-                    "[{}] Connecting (attempt #{})",
-                    self.config.addr,
-                    state.failure + 1
-                );
-
-                if let Some((w, codec)) = self.try_connect().await {
-                    info!(
-                        "#{} [{}] entered forwarding state",
-                        self.index, self.config.addr
-                    );
-                    // 创建 FramedWrite
-                    framed = Some(FramedWrite::new(w, codec));
-                    if self.send_status(ForwarderStatus::Connected).await.is_err() {
-                        break;
-                    }
-                } else {
-                    if self.failure_reached(&mut state) {
+                // 发送超时处理
+                _ = &mut timeout => {
+                    if self.handle_timeout(&mut framed, &mut state).await {
                         break;
                     }
                 }
-            };
-
-            // Send the message if we're connected
-            if let Some(f) = framed.as_mut() {
-                msg.set_stream_id(self.stream_id);
-                if let Err(e) = f.send(msg).await {
-                    warn!(
-                        "#{} [{}] send error: {}, dropping connection",
-                        self.index, self.config.addr, e
-                    );
-                    framed = None;
-                    if self
-                        .send_status(ForwarderStatus::Disconnected)
-                        .await
-                        .is_err()
-                        || self.failure_reached(&mut state)
-                    {
+                // 处理 rtmp 消息
+                b = self.handle_rx(&mut framed, &mut state) => {
+                    if b {
                         break;
                     }
-                } else if set_chunk_size {
-                    f.encoder_mut().set_chunk_size(self.chunk_size);
                 }
-            };
+            }
         }
+
         if let Some(mut f) = framed {
             self.shutdown(&mut f).await;
         }
         let _ = self.send_status(ForwarderStatus::Stopped).await;
         info!("Forwarder [{}] stopped", self.config.addr);
+    }
+
+    // 返回 true 表示退出循环
+    async fn handle_rx(
+        &mut self,
+        framed: &mut Option<FramedWrite<tcp::OwnedWriteHalf, RtmpCodec>>,
+        state: &mut ConnectionState,
+    ) -> bool {
+        let mut msg = match self.rx.recv().await {
+            Ok(ForwarderCommand::Message(msg)) => msg,
+            Err(RecvError::Lagged(n)) => {
+                warn!(
+                    "#{} [{}] receiver lagged, dropped {} RTMP messages",
+                    self.index, self.config.addr, n
+                );
+                return false;
+            }
+            Err(_) => return true,
+            _ => return false,
+        };
+
+        // 若为 SetChunkSize 消息，当前消息转发后更新 chunk_size
+        let set_chunk_size = msg.header().msg_type == 1 && msg.header().msg_len >= 4;
+        if set_chunk_size {
+            self.chunk_size = u32::from_be_bytes(msg.payload()[..4].try_into().unwrap()) as usize;
+        };
+
+        // 若未连接，尝试连接
+        if framed.is_none() && state.can_attempt() {
+            debug!(
+                "[{}] Connecting (attempt #{})",
+                self.config.addr,
+                state.failure + 1
+            );
+            if let Some((w, codec)) = self.try_connect().await {
+                info!(
+                    "#{} [{}] entered forwarding state",
+                    self.index, self.config.addr
+                );
+                // 创建 FramedWrite
+                *framed = Some(FramedWrite::new(w, codec));
+
+                if self.send_status(ForwarderStatus::Connected).await.is_err() {
+                    return true;
+                }
+            } else {
+                if self.failure_reached(state) {
+                    return true;
+                }
+                return false;
+            }
+        }
+
+        // 已连接则发送
+        if let Some(f) = framed.as_mut() {
+            msg.set_stream_id(self.stream_id);
+
+            if let Err(e) = f.send(msg).await {
+                warn!(
+                    "#{} [{}] send error: {}, dropping connection",
+                    self.index, self.config.addr, e
+                );
+
+                *framed = None;
+
+                if self
+                    .send_status(ForwarderStatus::Disconnected)
+                    .await
+                    .is_err()
+                    || self.failure_reached(state)
+                {
+                    return true;
+                }
+
+                return false;
+            } else if set_chunk_size {
+                // 更新 chunk_size
+                f.encoder_mut().set_chunk_size(self.chunk_size);
+            }
+        }
+
+        false
+    }
+
+    // 返回 true 表示退出循环
+    async fn handle_timeout(
+        &mut self,
+        framed: &mut Option<FramedWrite<tcp::OwnedWriteHalf, RtmpCodec>>,
+        state: &mut ConnectionState,
+    ) -> bool {
+        warn!("#{} [{}] forward timeout", self.index, self.config.addr);
+
+        if framed.is_some() {
+            *framed = None;
+
+            if self
+                .send_status(ForwarderStatus::Disconnected)
+                .await
+                .is_err()
+            {
+                return true;
+            }
+        }
+
+        self.failure_reached(state)
     }
 
     /// Attempt to connect and perform RTMP handshake + setup.
