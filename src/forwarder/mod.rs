@@ -7,7 +7,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpStream, tcp};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{sleep, timeout};
 use tokio_stream::StreamExt;
@@ -49,6 +48,8 @@ pub enum ForwarderEvent {
 
 /// Retry state for connection attempts
 struct ConnectionState {
+    framed: Option<FramedWrite<tcp::OwnedWriteHalf, RtmpCodec>>,
+    response_rx: Option<Receiver<RtmpMessage>>,
     failure: u32,
     last_failed: Instant,
 }
@@ -58,6 +59,8 @@ const MAX_FAILURE: u32 = 5;
 impl ConnectionState {
     fn new() -> Self {
         Self {
+            framed: None,
+            response_rx: None,
             failure: 0,
             last_failed: Instant::now(),
         }
@@ -136,13 +139,12 @@ impl Forwarder {
     /// Main loop for the forwarder task.
     pub async fn run(mut self) {
         info!("#{} [{}] started", self.index, self.config.addr);
-        let mut state = ConnectionState::new();
-        let mut framed = None;
+        let mut conn = ConnectionState::new();
         let mut timeout = pin!(sleep(CONNECT_TIMEOUT));
         let cancel_token = self.cancel_token.clone();
 
         loop {
-            if framed.is_none() {
+            if conn.framed.is_none() {
                 timeout
                     .as_mut()
                     .reset((Instant::now() + CONNECT_TIMEOUT).into());
@@ -159,12 +161,12 @@ impl Forwarder {
                 }
                 // 发送超时处理
                 _ = &mut timeout => {
-                    if self.handle_timeout(&mut framed, &mut state).await {
+                    if self.handle_timeout( &mut conn).await {
                         break;
                     }
                 }
                 // 处理 rtmp 消息
-                b = self.handle_rx(&mut framed, &mut state) => {
+                b = self.handle_rx( &mut conn) => {
                     if b {
                         break;
                     }
@@ -172,7 +174,7 @@ impl Forwarder {
             }
         }
 
-        if let Some(mut f) = framed {
+        if let Some(mut f) = conn.framed {
             self.shutdown(&mut f).await;
         }
         let _ = self.send_status(ForwarderStatus::Stopped).await;
@@ -180,11 +182,7 @@ impl Forwarder {
     }
 
     // 返回 true 表示退出循环
-    async fn handle_rx(
-        &mut self,
-        framed: &mut Option<FramedWrite<tcp::OwnedWriteHalf, RtmpCodec>>,
-        state: &mut ConnectionState,
-    ) -> bool {
+    async fn handle_rx(&mut self, conn: &mut ConnectionState) -> bool {
         let mut msg = match self.rx.recv().await {
             Ok(ForwarderCommand::Message(msg)) => msg,
             Err(RecvError::Lagged(n)) => {
@@ -205,25 +203,27 @@ impl Forwarder {
         };
 
         // 若未连接，尝试连接
-        if framed.is_none() && state.can_attempt() {
+        if conn.framed.is_none() && conn.can_attempt() {
             debug!(
-                "[{}] Connecting (attempt #{})",
+                "#{} [{}] Connecting (attempt #{})",
+                self.index,
                 self.config.addr,
-                state.failure + 1
+                conn.failure + 1
             );
-            if let Some((w, codec)) = self.try_connect().await {
+            if let Some((w, response_rx)) = self.try_connect().await {
                 info!(
                     "#{} [{}] entered forwarding state",
                     self.index, self.config.addr
                 );
-                // 创建 FramedWrite
-                *framed = Some(FramedWrite::new(w, codec));
+                // 创建 FramedWrite, 如果刚好是 SetChunkSize 触发 try_connect，则 SetChunkSize 会被发送两次
+                conn.framed = Some(FramedWrite::new(w, RtmpCodec::new(self.chunk_size)));
+                conn.response_rx = Some(response_rx);
 
                 if self.send_status(ForwarderStatus::Connected).await.is_err() {
                     return true;
                 }
             } else {
-                if self.failure_reached(state) {
+                if self.failure_reached(conn) {
                     return true;
                 }
                 return false;
@@ -231,7 +231,7 @@ impl Forwarder {
         }
 
         // 已连接则发送
-        if let Some(f) = framed.as_mut() {
+        if let Some(f) = conn.framed.as_mut() {
             msg.set_stream_id(self.stream_id);
 
             if let Err(e) = f.send(msg).await {
@@ -240,13 +240,14 @@ impl Forwarder {
                     self.index, self.config.addr, e
                 );
 
-                *framed = None;
+                conn.framed = None;
+                conn.response_rx = None;
 
                 if self
                     .send_status(ForwarderStatus::Disconnected)
                     .await
                     .is_err()
-                    || self.failure_reached(state)
+                    || self.failure_reached(conn)
                 {
                     return true;
                 }
@@ -255,6 +256,10 @@ impl Forwarder {
             } else if set_chunk_size {
                 // 更新 chunk_size
                 f.encoder_mut().set_chunk_size(self.chunk_size);
+                debug!(
+                    "#{} [{}] updated chunk size to {}",
+                    self.index, self.config.addr, self.chunk_size
+                );
             }
         }
 
@@ -262,15 +267,12 @@ impl Forwarder {
     }
 
     // 返回 true 表示退出循环
-    async fn handle_timeout(
-        &mut self,
-        framed: &mut Option<FramedWrite<tcp::OwnedWriteHalf, RtmpCodec>>,
-        state: &mut ConnectionState,
-    ) -> bool {
+    async fn handle_timeout(&mut self, conn: &mut ConnectionState) -> bool {
         warn!("#{} [{}] forward timeout", self.index, self.config.addr);
 
-        if framed.is_some() {
-            *framed = None;
+        if conn.framed.is_some() {
+            conn.framed = None;
+            conn.response_rx = None;
 
             if self
                 .send_status(ForwarderStatus::Disconnected)
@@ -281,11 +283,11 @@ impl Forwarder {
             }
         }
 
-        self.failure_reached(state)
+        self.failure_reached(conn)
     }
 
     /// Attempt to connect and perform RTMP handshake + setup.
-    async fn try_connect(&mut self) -> Option<(tcp::OwnedWriteHalf, RtmpCodec)> {
+    async fn try_connect(&mut self) -> Option<(tcp::OwnedWriteHalf, mpsc::Receiver<RtmpMessage>)> {
         // 请求快照
         if let Err(e) = self
             .manager_tx
@@ -326,25 +328,38 @@ impl Forwarder {
                 let (r, mut w) = socket.into_split();
 
                 // Spawn a background task to read server responses
-                let response_rx = Self::spawn_response_reader(r);
+                let mut response_rx = Self::spawn_response_reader(
+                    format!("#{} [{}]", self.index, self.config.addr),
+                    r,
+                );
 
                 // Perform RTMP command sequence (Connect -> Publish)
-                if let Ok(codec) = self.setup_protocol(&mut w, response_rx).await {
-                    return Some((w, codec));
+                if self.setup_protocol(&mut w, &mut response_rx).await.is_ok() {
+                    return Some((w, response_rx));
                 }
             }
         }
         None
     }
 
-    /// Spawn a background task to read and process server responses
-    fn spawn_response_reader(r: tcp::OwnedReadHalf) -> mpsc::Receiver<RtmpMessage> {
+    /// 启动一个后台任务来读取和处理服务器响应, 并返回一个接收端, 接收端被drop时, 任务会退出
+    fn spawn_response_reader(name: String, r: tcp::OwnedReadHalf) -> mpsc::Receiver<RtmpMessage> {
         let (tx, rx) = mpsc::channel(32);
 
         tokio::spawn(async move {
             let mut msg_stream = RtmpMessageStream::new(r, 128);
 
-            while let Some(msg) = msg_stream.next().await {
+            loop {
+                let msg = tokio::select! {
+                    _ = tx.closed() => break,
+                    r = msg_stream.next() => {
+                        match r {
+                            Some(msg) => msg,
+                            None => break,
+                        }
+                    }
+                };
+
                 match msg {
                     Ok(message) => {
                         // 检查是否是 SetChunkSize 消息 (msg_type = 1)
@@ -353,19 +368,18 @@ impl Forwarder {
                                 u32::from_be_bytes(message.payload()[..4].try_into().unwrap())
                                     as usize;
                             msg_stream.set_chunk_size(chunk_size);
-                            debug!("Server set chunk size to {}", chunk_size);
+                            debug!("{name} Server set chunk size to {chunk_size}");
                         }
-
-                        if let Err(TrySendError::Closed(_)) = tx.try_send(message) {
-                            break;
-                        }
+                        // 只管发送，不管是否成功
+                        tx.try_send(message).ok();
                     }
                     Err(e) => {
-                        error!("Error reading server response: {}", e);
+                        error!("{name} Error reading server response: {e}");
                         break;
                     }
                 }
             }
+            debug!("{name} Response reader stopped");
         });
 
         rx
@@ -375,8 +389,8 @@ impl Forwarder {
     async fn setup_protocol(
         &mut self,
         w: &mut tcp::OwnedWriteHalf,
-        mut response_rx: mpsc::Receiver<RtmpMessage>,
-    ) -> Result<RtmpCodec> {
+        response_rx: &mut mpsc::Receiver<RtmpMessage>,
+    ) -> Result<()> {
         let app = self.app();
         let stream = self.stream();
 
@@ -412,7 +426,7 @@ impl Forwarder {
         // 等待并处理 connect 响应
         timeout(
             Duration::from_secs(5),
-            self.handle_server_response(&mut response_rx, 1.0),
+            self.handle_server_response(response_rx, 1.0),
         )
         .await??;
 
@@ -441,7 +455,7 @@ impl Forwarder {
         // 等待并处理 createStream 响应
         timeout(
             Duration::from_secs(5),
-            self.handle_server_response(&mut response_rx, 4.0),
+            self.handle_server_response(response_rx, 4.0),
         )
         .await??;
 
@@ -474,7 +488,7 @@ impl Forwarder {
             codec.encode(m.clone(), &mut buf)?;
             w.write_all(&buf).await?;
         }
-        Ok(codec)
+        Ok(())
     }
 
     /// 处理服务器响应
