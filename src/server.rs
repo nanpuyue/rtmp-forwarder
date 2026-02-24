@@ -43,6 +43,7 @@ pub async fn handle_client(
     let mut s2c_chunk = 128usize;
 
     let mut stream = Some(StreamInfo {
+        is_default: false,
         stream_id: DEFAULT_STREAM_ID,
         client_id,
         tc_url: None,
@@ -301,8 +302,10 @@ pub async fn handle_client(
             _ => {}
         }
 
-        // 将消息发送到流管理器
-        stream_manager.handle_rtmp_message(msg).await;
+        // stream 为 None 或 is_default 为 true 时，将消息发送到流管理器
+        if !stream.as_ref().is_some_and(|s| !s.is_default) {
+            stream_manager.handle_rtmp_message(msg).await;
+        }
     }
 
     stream_manager.handle_disconnect(client_id).await;

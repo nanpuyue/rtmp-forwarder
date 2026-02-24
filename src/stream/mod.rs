@@ -52,6 +52,7 @@ pub struct StreamSnapshot {
 
 #[derive(Debug, Clone)]
 pub struct StreamInfo {
+    pub is_default: bool,
     pub stream_id: u32,
     pub client_id: u32,
     pub tc_url: Option<String>,
@@ -235,6 +236,7 @@ impl StreamManager {
             StreamState::None | StreamState::Idle | StreamState::Closed => {
                 stream.state = StreamState::Publishing;
                 let mut default_stream = self.default_stream.write().await;
+                stream.is_default = true;
                 drop(default_stream.replace(stream));
                 self.message_tx
                     .send(StreamMessage::StateChanged(StreamEvent::Publishing))
@@ -318,8 +320,10 @@ impl StreamManager {
 
 impl Drop for StreamInfo {
     fn drop(&mut self) {
-        self.message_tx
-            .send(StreamMessage::StateChanged(StreamEvent::Deleted))
-            .ok();
+        if self.is_default {
+            self.message_tx
+                .send(StreamMessage::StateChanged(StreamEvent::Deleted))
+                .ok();
+        }
     }
 }
