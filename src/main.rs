@@ -8,7 +8,7 @@ use tracing::{error, info};
 use crate::config::{AppConfig, ForwarderConfig, GetForwarders};
 use crate::error::{Context, Result};
 use crate::forwarder::{ForwarderManager, ForwarderManagerCommand};
-use crate::stream::{FlvManager, StreamManager};
+use crate::stream::{FlvManager, HlsManager, StreamManager};
 
 mod config;
 mod error;
@@ -146,27 +146,34 @@ async fn main() -> Result<()> {
     let flv_mgr_clone = flv_manager.clone();
     tokio::spawn(async move { flv_mgr_clone.run().await });
 
-    // 6. Start Web Server
+    // 6. Create HLS manager
+    let hls_manager = Arc::new(HlsManager::new(stream_manager.clone()));
+    let hls_mgr_clone = hls_manager.clone();
+    tokio::spawn(async move { hls_mgr_clone.run().await });
+
+    // 7. Start Web Server
     let web_conf = shared_config.clone();
     let web_flv_manager = flv_manager.clone();
+    let web_hls_manager = hls_manager.clone();
     let web_forwarder_cmd = forwarder_cmd_tx.clone();
     let web_stream_manager = stream_manager.clone();
     tokio::spawn(async move {
         web::start_web_server(
             web_conf,
             web_flv_manager,
+            web_hls_manager,
             web_forwarder_cmd,
             web_stream_manager,
         )
         .await;
     });
 
-    // 7. Bind the listening socket based on current config
+    // 8. Bind the listening socket based on current config
     let listen_addr = shared_config.read().unwrap().server.listen_addr.clone();
     let listener = TcpListener::bind(&listen_addr).await?;
     info!("RTMP listening on: {}", listen_addr);
 
-    // 8. Setup graceful shutdown
+    // 9. Setup graceful shutdown
     let shutdown_forwarder_cmd = forwarder_cmd_tx.clone();
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
     tokio::spawn(async move {

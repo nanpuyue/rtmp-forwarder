@@ -9,9 +9,11 @@ use crate::rtmp::RtmpMessage;
 
 pub use self::detect::KeyframeDetect;
 pub use self::flv::FlvManager;
+pub use self::hls::HlsManager;
 
 mod detect;
 mod flv;
+mod hls;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamState {

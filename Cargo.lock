@@ -506,6 +506,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "mpeg2ts"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7541fc1a42604cbd10e8607a4e6d4b231db982888fe8065ccb191b751d6368d6"
+
+[[package]]
 name = "nix"
 version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -645,6 +651,7 @@ dependencies = [
  "bytes",
  "clap",
  "futures-util",
+ "mpeg2ts",
  "nix",
  "rand",
  "rust-embed",

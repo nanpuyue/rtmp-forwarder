@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::body::Body;
+use axum::extract::Path;
 use axum::extract::ws::{self, WebSocket, WebSocketUpgrade};
 use axum::http::{StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
@@ -20,7 +21,7 @@ use tracing::info;
 use self::auth::BasicAuth;
 use crate::config::{GetForwarders, SharedConfig, WebConfig};
 use crate::forwarder::ForwarderManagerCommand;
-use crate::stream::{FlvManager, StreamEvent, StreamManager, StreamMessage};
+use crate::stream::{FlvManager, HlsManager, StreamEvent, StreamManager, StreamMessage};
 
 mod auth;
 
@@ -31,6 +32,7 @@ struct Assets;
 pub async fn start_web_server(
     config: SharedConfig,
     flv_manager: Arc<FlvManager>,
+    hls_manager: Arc<HlsManager>,
     forwarder_cmd_tx: mpsc::Sender<ForwarderManagerCommand>,
     stream_manager: Arc<StreamManager>,
 ) {
@@ -45,10 +47,13 @@ pub async fn start_web_server(
         .route("/api/config", post(update_config))
         .route("/api/stream-info", get(get_stream_info))
         .route("/live/stream.flv", get(handle_flv_stream))
+        .route("/live/stream.m3u8", get(handle_hls_playlist))
+        .route("/live/hls/{file}", get(handle_hls_segment))
         .route("/ws/stream-status", get(ws_handler))
         .fallback(static_handler)
         .layer(Extension(config))
         .layer(Extension(flv_manager))
+        .layer(Extension(hls_manager))
         .layer(Extension(forwarder_cmd_tx))
         .layer(Extension(stream_manager))
         .layer(CorsLayer::permissive());
@@ -163,6 +168,40 @@ pub async fn handle_flv_stream(
         .header(header::TRANSFER_ENCODING, "chunked")
         .body(Body::from_stream(flv_stream))
         .unwrap()
+}
+
+pub async fn handle_hls_playlist(
+    Extension(manager): Extension<Arc<HlsManager>>,
+) -> impl IntoResponse {
+    let playlist = manager.playlist().await;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/vnd.apple.mpegurl")
+        .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+        .header(header::PRAGMA, "no-cache")
+        .header(header::EXPIRES, "0")
+        .body(Body::from(playlist))
+        .unwrap()
+}
+
+pub async fn handle_hls_segment(
+    Path(file): Path<String>,
+    Extension(manager): Extension<Arc<HlsManager>>,
+) -> impl IntoResponse {
+    let id = match file.strip_suffix(".ts").and_then(|s| s.parse::<u64>().ok()) {
+        Some(id) => id,
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
+
+    match manager.segment(id).await {
+        Ok(segment) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "video/mp2t")
+            .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+            .body(Body::from(segment))
+            .unwrap(),
+        Err(status) => status.into_response(),
+    }
 }
 
 async fn ws_handler(
