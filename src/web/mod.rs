@@ -32,7 +32,7 @@ struct Assets;
 pub async fn start_web_server(
     config: SharedConfig,
     flv_manager: Arc<FlvManager>,
-    hls_manager: Arc<HlsManager>,
+    hls_manager: Option<Arc<HlsManager>>,
     forwarder_cmd_tx: mpsc::Sender<ForwarderManagerCommand>,
     stream_manager: Arc<StreamManager>,
 ) {
@@ -47,16 +47,21 @@ pub async fn start_web_server(
         .route("/api/config", post(update_config))
         .route("/api/stream-info", get(get_stream_info))
         .route("/live/stream.flv", get(handle_flv_stream))
-        .route("/live/stream.m3u8", get(handle_hls_playlist))
-        .route("/live/hls/{file}", get(handle_hls_segment))
         .route("/ws/stream-status", get(ws_handler))
         .fallback(static_handler)
         .layer(Extension(config))
         .layer(Extension(flv_manager))
-        .layer(Extension(hls_manager))
         .layer(Extension(forwarder_cmd_tx))
         .layer(Extension(stream_manager))
         .layer(CorsLayer::permissive());
+
+    // Add HLS routes only if HLS manager is provided
+    if let Some(hls_mgr) = hls_manager {
+        app = app
+            .route("/live/stream.m3u8", get(handle_hls_playlist))
+            .route("/live/hls/{file}", get(handle_hls_segment))
+            .layer(Extension(hls_mgr));
+    }
     if web_config.username.is_some() || web_config.password.is_some() {
         info!("Web dashboard requires authentication");
         let basic_auth = BasicAuth::new(web_config.username, web_config.password);

@@ -48,6 +48,10 @@ struct Cli {
     /// Sets a custom config file
     #[arg(short = 'c', long = "config", value_name = "FILE")]
     config: Option<String>,
+
+    /// Enable HLS streaming (provides /live/stream.m3u8)
+    #[arg(long = "hls")]
+    hls: bool,
 }
 
 fn parse_rtmp_url(url: &str) -> Result<(String, String, String)> {
@@ -146,22 +150,26 @@ async fn main() -> Result<()> {
     let flv_mgr_clone = flv_manager.clone();
     tokio::spawn(async move { flv_mgr_clone.run().await });
 
-    // 6. Create HLS manager
-    let hls_manager = Arc::new(HlsManager::new(stream_manager.clone()));
-    let hls_mgr_clone = hls_manager.clone();
-    tokio::spawn(async move { hls_mgr_clone.run().await });
+    // 6. Create HLS manager (optional, only when --hls flag is provided)
+    let hls_manager: Option<Arc<HlsManager>> = if cli.hls {
+        let manager = Arc::new(HlsManager::new(stream_manager.clone()));
+        let hls_mgr_clone = manager.clone();
+        tokio::spawn(async move { hls_mgr_clone.run().await });
+        info!("HLS streaming enabled");
+        Some(manager)
+    } else {
+        None
+    };
 
     // 7. Start Web Server
     let web_conf = shared_config.clone();
-    let web_flv_manager = flv_manager.clone();
-    let web_hls_manager = hls_manager.clone();
     let web_forwarder_cmd = forwarder_cmd_tx.clone();
     let web_stream_manager = stream_manager.clone();
     tokio::spawn(async move {
         web::start_web_server(
             web_conf,
-            web_flv_manager,
-            web_hls_manager,
+            flv_manager,
+            hls_manager,
             web_forwarder_cmd,
             web_stream_manager,
         )
