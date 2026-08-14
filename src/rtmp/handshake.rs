@@ -1,4 +1,4 @@
-use rand::Rng;
+use rand::RngExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::debug;
