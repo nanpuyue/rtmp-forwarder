@@ -36,6 +36,27 @@
             gap: 2rem;
         }
 
+        .topbar {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 1rem;
+        }
+
+        .language-toggle {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            color: #cbd5e1;
+            border-radius: 8px;
+            padding: 0.45rem 0.8rem;
+            cursor: pointer;
+            font: inherit;
+        }
+
+        .language-toggle:hover {
+            background: rgba(255, 255, 255, 0.15);
+            color: white;
+        }
+
         .left-panel {
             flex: 1;
             min-width: 0;
@@ -464,6 +485,9 @@
 
 <body>
     <div class="container">
+        <div class="topbar">
+            <button id="language-toggle" class="language-toggle" type="button" onclick="toggleLanguage()" aria-label="Switch language">English</button>
+        </div>
         <div class="card">
             <div class="main-card">
                 <div class="left-panel">
@@ -476,21 +500,21 @@
 
                 <div class="right-panel">
                     <div class="section">
-                        <span class="section-title">推流配置</span>
+                        <span class="section-title" data-i18n="forwarderConfig">推流配置</span>
                         <div id="upstreams-container"></div>
-                        <button class="btn btn-add" onclick="addUpstream()">+ 添加推流目标</button>
+                        <button class="btn btn-add" onclick="addUpstream()" data-i18n="addForwarder">+ 添加推流目标</button>
                     </div>
 
                     <div class="section">
-                        <span class="section-title">中继配置</span>
+                        <span class="section-title" data-i18n="relayConfig">中继配置</span>
                         <div id="relay-container">
                             <div class="upstream-item" style="align-items: center;">
-                                <input type="text" id="relay_display" placeholder="等待推流..." readonly>
+                                <input type="text" id="relay_display" placeholder="等待推流..." data-i18n-placeholder="waitingForStream" readonly>
                                 <label class="switch">
                                     <input type="checkbox" id="relay_enabled" onchange="save()">
                                     <span class="slider"></span>
                                 </label>
-                                <button class="btn btn-icon" onclick="editRelay()" title="编辑" id="relay-edit-btn">
+                                <button class="btn btn-icon" onclick="editRelay()" title="编辑" data-i18n-title="edit" id="relay-edit-btn">
                                 </button>
                             </div>
                         </div>
@@ -503,18 +527,18 @@
     <div id="editModal" class="modal">
         <div class="modal-content">
             <span class="modal-close" onclick="closeModal()">&times;</span>
-            <div class="modal-title">编辑推流目标</div>
+            <div class="modal-title" data-i18n="editForwarder">编辑推流目标</div>
             <div class="form-group">
-                <label>推流地址</label>
+                <label data-i18n="streamAddress">推流地址</label>
                 <input type="text" id="modal_addr" placeholder="rtmp://">
             </div>
             <div class="form-group">
-                <label>推流码</label>
+                <label data-i18n="streamKey">推流码</label>
                 <input type="text" id="modal_stream" placeholder="">
             </div>
             <div class="modal-buttons" style="justify-content: flex-end;">
-                <button class="btn btn-remove" onclick="deleteUpstream()">删除</button>
-                <button class="btn btn-save" onclick="saveUpstream()">保存</button>
+                <button class="btn btn-remove" onclick="deleteUpstream()" data-i18n="delete">删除</button>
+                <button class="btn btn-save" onclick="saveUpstream()" data-i18n="save">保存</button>
             </div>
         </div>
     </div>
@@ -522,22 +546,22 @@
     <div id="relayModal" class="modal">
         <div class="modal-content">
             <span class="modal-close" onclick="closeRelayModal()">&times;</span>
-            <div class="modal-title">编辑中继配置</div>
+            <div class="modal-title" data-i18n="editRelay">编辑中继配置</div>
             <div class="form-group">
-                <label>推流地址</label>
-                <input type="text" id="relay_modal_tcurl" placeholder="等待推流..." readonly>
+                <label data-i18n="streamAddress">推流地址</label>
+                <input type="text" id="relay_modal_tcurl" placeholder="等待推流..." data-i18n-placeholder="waitingForStream" readonly>
             </div>
             <div class="form-group">
-                <label>推流码</label>
-                <input type="text" id="relay_modal_stream" placeholder="等待推流..." readonly>
+                <label data-i18n="streamKey">推流码</label>
+                <input type="text" id="relay_modal_stream" placeholder="等待推流..." data-i18n-placeholder="waitingForStream" readonly>
             </div>
             <div class="form-group">
-                <label>中继地址</label>
-                <input type="text" id="relay_modal_custom" placeholder="等待推流...">
+                <label data-i18n="relayAddress">中继地址</label>
+                <input type="text" id="relay_modal_custom" placeholder="等待推流..." data-i18n-placeholder="waitingForStream">
             </div>
             <div class="modal-buttons" style="justify-content: flex-end;">
-                <button class="btn btn-save" onclick="showAddToForwarderModal()">添加为推流配置</button>
-                <button class="btn btn-save" onclick="saveRelay()">保存</button>
+                <button class="btn btn-save" onclick="showAddToForwarderModal()" data-i18n="addAsForwarder">添加为推流配置</button>
+                <button class="btn btn-save" onclick="saveRelay()" data-i18n="save">保存</button>
             </div>
         </div>
     </div>
@@ -545,22 +569,66 @@
     <div id="addToForwarderModal" class="modal">
         <div class="modal-content">
             <span class="modal-close" onclick="closeAddToForwarderModal()">&times;</span>
-            <div class="modal-title">添加为推流配置</div>
+            <div class="modal-title" data-i18n="addAsForwarder">添加为推流配置</div>
             <div class="form-group">
-                <label>选择目标</label>
+                <label data-i18n="selectTarget">选择目标</label>
                 <select id="add_forwarder_target">
-                    <option value="-1">新增</option>
+                    <option value="-1" data-i18n="new">新增</option>
                 </select>
             </div>
             <div class="modal-buttons" style="justify-content: flex-end;">
-                <button class="btn btn-save" onclick="addRelayToForwarder()">确定</button>
+                <button class="btn btn-save" onclick="addRelayToForwarder()" data-i18n="confirm">确定</button>
             </div>
         </div>
     </div>
 
-    <div id="toast" class="toast">Success! Configuration updated.</div>
+    <div id="toast" class="toast" data-i18n="saveSuccess">配置已更新。</div>
 
     <script>
+        const translations = {
+            zh: {
+                pageTitle: 'RTMP 转发器控制台', forwarderConfig: '推流配置', relayConfig: '中继配置',
+                addForwarder: '+ 添加推流目标', edit: '编辑', editForwarder: '编辑推流目标', editRelay: '编辑中继配置',
+                streamAddress: '推流地址', streamKey: '推流码', relayAddress: '中继地址', delete: '删除', save: '保存',
+                addAsForwarder: '添加为推流配置', selectTarget: '选择目标', new: '新增', confirm: '确定',
+                waitingForStream: '等待推流...', saveSuccess: '配置已更新。', browserNotSupported: '浏览器不支持播放此视频。',
+                waitForStreamAlert: '请等待推流成功后再操作', overwrite: '覆盖:'
+            },
+            en: {
+                pageTitle: 'RTMP Forwarder Dashboard', forwarderConfig: 'Forwarding', relayConfig: 'Relay',
+                addForwarder: '+ Add forwarding target', edit: 'Edit', editForwarder: 'Edit forwarding target', editRelay: 'Edit relay configuration',
+                streamAddress: 'Stream URL', streamKey: 'Stream key', relayAddress: 'Relay address', delete: 'Delete', save: 'Save',
+                addAsForwarder: 'Add as forwarding target', selectTarget: 'Select target', new: 'New', confirm: 'Confirm',
+                waitingForStream: 'Waiting for stream...', saveSuccess: 'Configuration updated.', browserNotSupported: 'This browser does not support video playback.',
+                waitForStreamAlert: 'Please wait until the stream is available.', overwrite: 'Replace:'
+            }
+        };
+
+        const savedLanguage = localStorage.getItem('rtmp-forwarder-language');
+        let currentLanguage = savedLanguage || ((navigator.languages || [navigator.language || 'en'])
+            .some(language => language.toLowerCase().startsWith('zh')) ? 'zh' : 'en');
+
+        const t = (key) => translations[currentLanguage][key] || translations.en[key] || key;
+
+        function applyLanguage() {
+            document.documentElement.lang = currentLanguage === 'zh' ? 'zh-CN' : 'en';
+            document.title = t('pageTitle');
+            document.querySelectorAll('[data-i18n]').forEach(element => element.textContent = t(element.dataset.i18n));
+            document.querySelectorAll('[data-i18n-placeholder]').forEach(element => element.placeholder = t(element.dataset.i18nPlaceholder));
+            document.querySelectorAll('[data-i18n-title]').forEach(element => element.title = t(element.dataset.i18nTitle));
+            const toggle = document.getElementById('language-toggle');
+            toggle.textContent = currentLanguage === 'zh' ? 'English' : '中文';
+            toggle.setAttribute('aria-label', currentLanguage === 'zh' ? 'Switch to English' : '切换至中文');
+            updateRelay();
+            refreshUpstreams();
+        }
+
+        function toggleLanguage() {
+            currentLanguage = currentLanguage === 'zh' ? 'en' : 'zh';
+            localStorage.setItem('rtmp-forwarder-language', currentLanguage);
+            applyLanguage();
+        }
+
         let player = null;
         let isPlaying = false;
         let ws = null;
@@ -622,7 +690,7 @@
             }
 
             if (!mpegts.isSupported()) {
-                alert('Browser not supported');
+                alert(t('browserNotSupported'));
                 return;
             }
 
@@ -708,7 +776,7 @@
         function refreshUpstreams() {
             const container = document.getElementById('upstreams-container');
             container.innerHTML = '';
-            config.forwarders.forEach(addUpstreamUI);
+            (config.forwarders || []).forEach(addUpstreamUI);
         }
 
         const formatRtmpUrl = (addr) => addr && !addr.startsWith('rtmp://') ? 'rtmp://' + addr : addr || '';
@@ -725,7 +793,7 @@
                     <input type="checkbox" id="up_enabled_${index}" ${u.enabled ? 'checked' : ''} onchange="toggleUpstream(${index})">
                     <span class="slider"></span>
                 </label>
-                <button class="btn btn-icon" onclick="editUpstream(${index})" title="编辑">
+                <button class="btn btn-icon" onclick="editUpstream(${index})" title="${t('edit')}">
                     ${EDIT_ICON_SVG}
                 </button>
             `;
@@ -781,14 +849,14 @@
             const tcurl = document.getElementById('relay_modal_tcurl').value;
             const streamKey = document.getElementById('relay_modal_stream').value;
 
-            if (!tcurl || tcurl === '等待推流...' || !streamKey || streamKey === '等待推流...') {
-                alert('请等待推流成功后再操作');
+            if (!tcurl || tcurl === t('waitingForStream') || !streamKey || streamKey === t('waitingForStream')) {
+                alert(t('waitForStreamAlert'));
                 return;
             }
 
             const targetSelect = document.getElementById('add_forwarder_target');
-            targetSelect.innerHTML = '<option value="-1">新增</option>' +
-                config.forwarders.map((f, i) => `<option value="${i}">覆盖: ${formatRtmpUrl(f.addr)}</option>`).join('');
+            targetSelect.innerHTML = `<option value="-1">${t('new')}</option>` +
+                config.forwarders.map((f, i) => `<option value="${i}">${t('overwrite')} ${formatRtmpUrl(f.addr)}</option>`).join('');
 
             closeRelayModal();
             document.getElementById('addToForwarderModal').style.display = 'flex';
@@ -836,7 +904,7 @@
         function updateRelay() {
             const isPublishing = streamState === 'publishing';
             const relayAddr = config.relay_addr || '';
-            const origDestAddr = isPublishing ? (streamInfo?.orig_dest_addr || '') : '等待推流...';
+            const origDestAddr = isPublishing ? (streamInfo?.orig_dest_addr || '') : t('waitingForStream');
 
             // 更新首页显示
             const displayInput = document.getElementById('relay_display');
@@ -844,8 +912,8 @@
             displayInput.placeholder = origDestAddr;
 
             // 更新模态框
-            document.getElementById('relay_modal_tcurl').value = isPublishing ? (streamInfo?.tc_url || '') : '等待推流...';
-            document.getElementById('relay_modal_stream').value = isPublishing ? (streamInfo?.stream_key || '') : '等待推流...';
+            document.getElementById('relay_modal_tcurl').value = isPublishing ? (streamInfo?.tc_url || '') : t('waitingForStream');
+            document.getElementById('relay_modal_stream').value = isPublishing ? (streamInfo?.stream_key || '') : t('waitingForStream');
             const customInput = document.getElementById('relay_modal_custom');
             customInput.value = relayAddr;
             customInput.placeholder = origDestAddr;
@@ -949,6 +1017,7 @@
             }
         }
 
+        applyLanguage();
         load();
         connectWebSocket();
     </script>
