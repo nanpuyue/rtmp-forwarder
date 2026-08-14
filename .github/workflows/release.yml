@@ -52,7 +52,8 @@ jobs:
         shell: bash
         run: |
           set -eux
-          export RUSTFLAGS="-C linker=rust-lld -C embed-bitcode=yes -C lto -C link-args=-s -C debuginfo=0"
+          export CARGO_PROFILE_RELEASE_STRIP=true
+          export RUSTFLAGS="-C linker=rust-lld -C embed-bitcode=yes -C lto -C debuginfo=0"
           if [[ "${{ matrix.target }}" == *-linux-musl* ]]; then
             export RUSTFLAGS+=" -C target-feature=+crt-static"
           fi
