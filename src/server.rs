@@ -71,8 +71,8 @@ pub async fn handle_client(
         };
 
         match msg.header().msg_type {
-            1 => {
-                if msg.header().msg_len >= 4 {
+            1
+                if msg.header().msg_len >= 4 => {
                     let payload = msg.payload();
                     let c2s_chunk = u32::from_be_bytes(payload[..4].try_into().unwrap()) as usize;
                     msg_stream.set_chunk_size(c2s_chunk);
@@ -84,7 +84,6 @@ pub async fn handle_client(
                         .await;
                     info!("Client {client_id} set chunk size to {c2s_chunk}");
                 }
-            }
             20 => {
                 let stream_id = msg.header().stream_id;
                 if let Ok(cmd) = RtmpMessage::command(&msg) {
@@ -303,7 +302,7 @@ pub async fn handle_client(
         }
 
         // stream 为 None 或 is_default 为 true 时，将消息发送到流管理器
-        if !stream.as_ref().is_some_and(|s| !s.is_default) {
+        if stream.as_ref().is_none_or(|s| s.is_default) {
             stream_manager.handle_rtmp_message(msg).await;
         }
     }

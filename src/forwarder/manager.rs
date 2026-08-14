@@ -70,12 +70,11 @@ impl ForwarderManager {
                                         self.sync_forwarders(snapshot).await;
                                     }
                                 }
-                                StreamEvent::Idle | StreamEvent::Closed | StreamEvent::Deleted => {
-                                    if !self.running_configs.is_empty() {
+                                StreamEvent::Idle | StreamEvent::Closed | StreamEvent::Deleted
+                                    if !self.running_configs.is_empty() => {
                                         info!("Stream stopped");
                                         self.stop_all_forwarders();
                                     }
-                                }
                                 _ => {}
                             }
                         }
@@ -213,15 +212,14 @@ impl ForwarderManager {
                     self.start_forwarder(index, new, snapshot.clone());
                     started += 1;
                 }
-                (Some(new), Some(old)) if new.enabled && old.enabled => {
+                (Some(new), Some(old)) if new.enabled && old.enabled
                     // Both enabled, check if config changed
-                    if old.addr != new.addr || old.app != new.app || old.stream != new.stream {
+                    && (old.addr != new.addr || old.app != new.app || old.stream != new.stream) => {
                         // Restart with new config
                         self.stop_forwarder(index);
                         self.start_forwarder(index, new, snapshot.clone());
                         restarted += 1;
                     }
-                }
                 (None, Some(old)) if old.enabled => {
                     // Config removed, stop
                     self.stop_forwarder(index);
