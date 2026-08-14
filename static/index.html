@@ -36,20 +36,26 @@
             gap: 2rem;
         }
 
-        .topbar {
+        .section-header {
             display: flex;
-            justify-content: flex-end;
+            align-items: center;
+            justify-content: space-between;
             margin-bottom: 1rem;
         }
 
         .language-toggle {
-            background: rgba(255, 255, 255, 0.08);
+            background: rgba(15, 23, 42, 0.7);
             border: 1px solid rgba(255, 255, 255, 0.15);
             color: #cbd5e1;
-            border-radius: 8px;
-            padding: 0.45rem 0.8rem;
+            border-radius: 999px;
+            box-sizing: border-box;
+            height: 1.25rem;
+            padding: 0 0.55rem;
             cursor: pointer;
             font: inherit;
+            font-size: 0.75rem;
+            display: inline-flex;
+            align-items: center;
         }
 
         .language-toggle:hover {
@@ -175,7 +181,12 @@
             letter-spacing: 0.1em;
             color: #94a3b8;
             margin-bottom: 1rem;
+            line-height: 1.25rem;
             display: block;
+        }
+
+        .section-header .section-title {
+            margin-bottom: 0;
         }
 
         .form-group {
@@ -485,9 +496,6 @@
 
 <body>
     <div class="container">
-        <div class="topbar">
-            <button id="language-toggle" class="language-toggle" type="button" onclick="toggleLanguage()" aria-label="Switch language">English</button>
-        </div>
         <div class="card">
             <div class="main-card">
                 <div class="left-panel">
@@ -500,7 +508,10 @@
 
                 <div class="right-panel">
                     <div class="section">
-                        <span class="section-title" data-i18n="forwarderConfig">推流配置</span>
+                        <div class="section-header">
+                            <span class="section-title" data-i18n="forwarderConfig">推流配置</span>
+                            <button id="language-toggle" class="language-toggle" type="button" onclick="toggleLanguage()" aria-label="Switch language">English</button>
+                        </div>
                         <div id="upstreams-container"></div>
                         <button class="btn btn-add" onclick="addUpstream()" data-i18n="addForwarder">+ 添加推流目标</button>
                     </div>
