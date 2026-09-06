@@ -71,19 +71,18 @@ pub async fn handle_client(
         };
 
         match msg.header().msg_type {
-            1
-                if msg.header().msg_len >= 4 => {
-                    let payload = msg.payload();
-                    let c2s_chunk = u32::from_be_bytes(payload[..4].try_into().unwrap()) as usize;
-                    msg_stream.set_chunk_size(c2s_chunk);
-                    if let Some(stream) = stream.as_mut() {
-                        stream.chunk_szie = c2s_chunk;
-                    }
-                    stream_manager
-                        .handle_set_chunk_size(client_id, c2s_chunk)
-                        .await;
-                    info!("Client {client_id} set chunk size to {c2s_chunk}");
+            1 if msg.header().msg_len >= 4 => {
+                let payload = msg.payload();
+                let c2s_chunk = u32::from_be_bytes(payload[..4].try_into().unwrap()) as usize;
+                msg_stream.set_chunk_size(c2s_chunk);
+                if let Some(stream) = stream.as_mut() {
+                    stream.chunk_szie = c2s_chunk;
                 }
+                stream_manager
+                    .handle_set_chunk_size(client_id, c2s_chunk)
+                    .await;
+                info!("Client {client_id} set chunk size to {c2s_chunk}");
+            }
             20 => {
                 let stream_id = msg.header().stream_id;
                 if let Ok(cmd) = RtmpMessage::command(&msg) {

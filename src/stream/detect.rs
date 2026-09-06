@@ -161,34 +161,55 @@ mod tests {
     #[test]
     fn enhanced_rtmp_keyframe() {
         // 0x91 = IsExVideoHeader + keyframe + Coded Frames
-        let hevc = tag(
-            &[[0x91].as_slice(), b"hvc1", &[0, 0, 0], &[0, 0, 0, 2], &[0x26, 0x01]].concat(),
-        );
+        let hevc = tag(&[
+            [0x91].as_slice(),
+            b"hvc1",
+            &[0, 0, 0],
+            &[0, 0, 0, 2],
+            &[0x26, 0x01],
+        ]
+        .concat());
         assert!(hevc.is_keyframe());
 
         // hev1 是 HEVC 的别名
-        let hev1 = tag(
-            &[[0x91].as_slice(), b"hev1", &[0, 0, 0], &[0, 0, 0, 2], &[0x26, 0x01]].concat(),
-        );
+        let hev1 = tag(&[
+            [0x91].as_slice(),
+            b"hev1",
+            &[0, 0, 0],
+            &[0, 0, 0, 2],
+            &[0x26, 0x01],
+        ]
+        .concat());
         assert!(hev1.is_keyframe());
 
         // avc1 同样以 FrameType 判定
-        let avc = tag(
-            &[[0x91].as_slice(), b"avc1", &[0, 0, 0], &[0, 0, 0, 1], &[0x65]].concat(),
-        );
+        let avc = tag(&[
+            [0x91].as_slice(),
+            b"avc1",
+            &[0, 0, 0],
+            &[0, 0, 0, 1],
+            &[0x65],
+        ]
+        .concat());
         assert!(avc.is_keyframe());
 
         // 0xA1 = IsExVideoHeader + inter frame + Coded Frames
-        let inter = tag(
-            &[[0xA1].as_slice(), b"hvc1", &[0, 0, 0], &[0, 0, 0, 2], &[0x02, 0x01]].concat(),
-        );
+        let inter = tag(&[
+            [0xA1].as_slice(),
+            b"hvc1",
+            &[0, 0, 0],
+            &[0, 0, 0, 2],
+            &[0x02, 0x01],
+        ]
+        .concat());
         assert!(!inter.is_keyframe());
     }
 
     #[test]
     fn enhanced_rtmp_non_coded_frames() {
         // 0x90 = IsExVideoHeader + keyframe + Sequence Start
-        let seq_start = tag(&[[0x90].as_slice(), b"hvc1", &[0x01, 0x00, 0x00, 0x00, 0x00]].concat());
+        let seq_start =
+            tag(&[[0x90].as_slice(), b"hvc1", &[0x01, 0x00, 0x00, 0x00, 0x00]].concat());
         assert!(!seq_start.is_keyframe());
 
         // 0x92 = Sequence End
