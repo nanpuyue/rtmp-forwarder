@@ -8,6 +8,7 @@ use axum::http::{StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
+use bytes::Bytes;
 use rust_embed::RustEmbed;
 use serde_json::json;
 use tokio::net::TcpListener;
@@ -21,7 +22,7 @@ use tracing::info;
 use self::auth::BasicAuth;
 use crate::config::{GetForwarders, SharedConfig, WebConfig};
 use crate::forwarder::ForwarderManagerCommand;
-use crate::stream::{FlvManager, HlsManager, StreamEvent, StreamManager, StreamMessage};
+use crate::stream::{FlvFrame, FlvManager, HlsManager, StreamEvent, StreamManager, StreamMessage};
 
 mod auth;
 
@@ -159,9 +160,22 @@ pub async fn handle_flv_stream(
 ) -> impl IntoResponse {
     info!("HTTP-FLV: Request for stream");
 
-    // 获取 flv 头部数据和流广播
-    let (header, rx) = manager.subscribe_flv().await;
-    let flv_stream = tokio_stream::once(Ok(header)).chain(BroadcastStream::new(rx));
+    // 获取 flv 头部数据和流广播；无推流、流中途结束或等不到关键帧时返回 404
+    let Some((header, rx)) = manager.subscribe_flv().await else {
+        info!("HTTP-FLV: stream not found");
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let tags = BroadcastStream::new(rx)
+        // 收到流结束标记后终止响应，客户端收到正常的 EOF
+        .take_while(|frame| !matches!(frame, Ok(FlvFrame::End)))
+        .map(|frame| {
+            frame.map(|frame| match frame {
+                FlvFrame::Tag(data) => data,
+                FlvFrame::End => Bytes::new(),
+            })
+        });
+    let flv_stream = tokio_stream::once(Ok(header)).chain(tags);
 
     Response::builder()
         .status(StatusCode::OK)

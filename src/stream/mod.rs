@@ -8,7 +8,7 @@ use tracing::warn;
 use crate::rtmp::RtmpMessage;
 
 pub use self::detect::KeyframeDetect;
-pub use self::flv::FlvManager;
+pub use self::flv::{FlvFrame, FlvManager};
 pub use self::hls::HlsManager;
 
 mod detect;
